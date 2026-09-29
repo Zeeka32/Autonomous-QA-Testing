@@ -1,0 +1,26 @@
+{
+  "actions": [
+    {
+      "kind": "navigate",
+      "url": "https://example.com"
+    },
+    {
+      "kind": "wait_for",
+      "selector": "h1"
+    }
+  ],
+  "assertions": [
+    {
+      "kind": "url_contains",
+      "value": "example.com"
+    },
+    {
+      "kind": "title_contains",
+      "value": "Example Domain"
+    },
+    {
+      "kind": "element_visible",
+      "selector": "h1"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autonomous-qa-testing"
+version = "0.1.0"
+description = "A command-line tool for deterministic website QA checks"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=3,<4",
+    "playwright",
+    "pydantic>=2,<3",
+    "python-dotenv>=1,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9,<10",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
