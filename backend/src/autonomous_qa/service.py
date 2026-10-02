@@ -207,6 +207,7 @@ def run_qa(
     *,
     on_message: MessageReporter | None = None,
     on_agent_step: AgentStepReporter | None = None,
+    run_paths: RunPaths | None = None,
 ) -> QaRunResult:
     """Run a suite and save its report without reading CLI input or printing.
 
@@ -215,7 +216,9 @@ def run_qa(
     """
 
     budget = SuiteBudgetTracker(request.budget_policy)
-    paths = RunPaths(request.runs_directory)
+    paths = run_paths or RunPaths(request.runs_directory)
+    if paths.runs_directory != request.runs_directory:
+        raise ValueError("Run paths must use the request runs directory")
     emit = on_message or _ignore_message
     suite_run = None
     try:

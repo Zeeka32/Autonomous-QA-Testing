@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.0 — 2026-10-02
+
+- Added a FastAPI interface with validated requests, structured responses, and
+  interactive documentation at `/docs`.
+- Added background execution in a bounded in-process worker pool. `POST /runs`
+  returns `202` with a run ID; `GET /runs/{run_id}` reports queued, running,
+  completed, or failed status.
+- Added endpoints to download JSON reports, list available artifacts, and fetch
+  screenshots or Playwright traces by run ID. Saved files remain available
+  after an API restart.
+- Added API tests and a real-browser HTTP integration test.
+
+### Compatibility notes
+
+- API clients now poll `GET /runs/{run_id}` for results after `POST /runs`.
+- CLI behavior remains available; API runs store files under
+  `qa-runs/<run-id>/` unless configured otherwise.
+
+### Limitations
+
+- Live run status is held in memory and is lost on restart; saved files remain.
+- There is no cancellation, automatic cleanup, authentication, or frontend yet.
+- The API is intended for local use with one Uvicorn worker.
+
 ## 0.2.0 — 2026-10-02
 
 ### Added

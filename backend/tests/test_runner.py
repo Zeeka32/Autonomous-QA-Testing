@@ -2,10 +2,13 @@ import json
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
+from time import sleep
 
 import pytest
+from fastapi.testclient import TestClient
 
 from autonomous_qa.agent import AgentStatus
+from autonomous_qa.api import create_app
 from autonomous_qa.checks import run_checks
 from autonomous_qa.models import ActionResult, CheckResult, PageObservation
 from autonomous_qa.planner import DecisionStatus, PlannerDecision
@@ -89,6 +92,36 @@ def test_service_runs_baseline_suite_in_real_browser(
     assert len(report["tests"]) == 2
     assert (result.artifact_directory / "baseline-screenshot.png").is_file()
     assert (result.artifact_directory / "baseline-trace.zip").is_file()
+
+
+def test_api_runs_real_browser_and_returns_report(local_test_page, tmp_path):
+    with TestClient(create_app(tmp_path / "api-runs")) as client:
+        response = client.post("/runs", json={"url": local_test_page})
+        assert response.status_code == 202
+        for _ in range(500):
+            status = client.get(response.json()["status_path"]).json()
+            if status["status"] in {"completed", "failed"}:
+                break
+            sleep(0.01)
+        else:
+            pytest.fail("Browser run did not finish within five seconds")
+        report = client.get(f"/runs/{status['run_id']}/report")
+        listing = client.get(f"/runs/{status['run_id']}/artifacts")
+
+    data = status
+    assert data["status"] == "completed"
+    assert data["passed"] is True
+    directory = tmp_path / "api-runs" / data["run_id"]
+    assert (directory / "report.json").is_file()
+    assert (directory / "artifacts" / "baseline-screenshot.png").is_file()
+    assert (directory / "artifacts" / "baseline-trace.zip").is_file()
+    assert report.status_code == 200
+    assert report.json()["run_id"] == data["run_id"]
+    assert listing.status_code == 200
+    assert [item["name"] for item in listing.json()["artifacts"]] == [
+        "baseline-screenshot.png",
+        "baseline-trace.zip",
+    ]
 
 
 class ScriptedPlanner:

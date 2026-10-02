@@ -21,6 +21,12 @@ reusable application service, and isolated output directories for each run.
 
 See [CHANGELOG.md](CHANGELOG.md) for release highlights and compatibility notes.
 
+## Version 0.3.0
+
+Version 0.3.0 adds a local HTTP API. It accepts runs immediately, executes them
+in a small in-process worker pool, and lets clients poll results and download
+reports, screenshots, and traces. CLI workflows are still available.
+
 ## Initial checks
 
 - Navigation completes successfully.
@@ -30,8 +36,87 @@ See [CHANGELOG.md](CHANGELOG.md) for release highlights and compatibility notes.
 ## Not included yet
 
 The project does not yet include broad site crawling, authentication, a
-database, an API, or a frontend. AI-driven runs are intentionally bounded to
-the validated browser actions described below.
+database, or a frontend. AI-driven runs are intentionally bounded to the
+validated browser actions described below.
+
+## Running the HTTP API
+
+From `backend/`, install the project dependencies if needed and start Uvicorn:
+
+```bash
+python -m pip install -e ".[dev]"
+python -m uvicorn autonomous_qa.api:app --host 127.0.0.1 --port 8000
+```
+
+Open `http://127.0.0.1:8000/docs` to try the API interactively. Startup loads
+`backend/.env` without overriding existing environment variables. API keys
+stay on the server; clients supply only a provider/model choice.
+
+Run the deterministic baseline suite without an AI request:
+
+```bash
+curl -X POST http://127.0.0.1:8000/runs \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com"}'
+```
+
+To generate a suite, add request text and optional budgets:
+
+```json
+{
+  "url": "https://example.com",
+  "request": "Test basic navigation",
+  "provider": "gemini",
+  "budget_policy": {"max_ai_requests": 6, "max_browser_runs": 3}
+}
+```
+
+`POST /runs` returns immediately with HTTP `202`, a `run_id`, and a
+`status_path`. The client calls `GET /runs/{run_id}` until `status` becomes
+`completed` or `failed`. A completed response includes `passed`, `suite_run`
+(suite definition and case results), `budget`, `report_path`, and
+`artifact_directory`. `passed` can be false even when status is `completed`:
+the run finished, but some tests failed or were skipped.
+
+Output is stored under `qa-runs/<run-id>/` relative to the server working
+directory. The response paths are server filesystem paths. Download files
+through the API instead:
+
+```text
+GET /runs/{run_id}/report
+GET /runs/{run_id}/artifacts
+GET /runs/{run_id}/artifacts/{filename}
+```
+
+The artifact listing returns names and URLs for available screenshots and
+traces. These endpoints read run files from disk, so they still work after an
+API restart even though `GET /runs/{run_id}` no longer knows that run. Missing
+files return `404`. Only a run's known screenshot and trace names are served;
+arbitrary filenames and symlinks are rejected. Clients cannot choose output
+paths. Python hosts can configure them through
+`create_app(runs_directory=Path(...))`.
+
+HTTP status codes:
+
+- `202` from `POST /runs`: run accepted and queued.
+- `200` from `GET /runs/{run_id}`: status is queued, running, completed, or
+  failed. Inspect `passed` for a completed run.
+- `422`: invalid input, such as a non-HTTP URL, blank request, or invalid budget.
+- `404` from `GET /runs/{run_id}`: ID is unknown to this server process.
+  Artifact endpoints return `404` when the run directory or file is missing.
+- `429` from `POST /runs`: the in-process run queue is full.
+
+Failed run statuses include a safe error code and message, budget usage when
+available, and any completed suite results. Provider exception details stay
+in server logs. A busy provider can still cause a run to fail, but the
+original `POST` no longer waits for that request to finish.
+
+The in-memory registry allows two workers and eight active jobs (running plus
+queued) by default. The ID and status are available only in the server process
+that accepted the run; a restart loses status, though reports already written
+to disk remain. Run the API with one Uvicorn worker for now. Graceful shutdown
+waits for active runs. There is no persistent queue, cancellation, or
+authentication yet. This milestone is intended for local use on loopback.
 
 ## Running the CLI
 
@@ -186,8 +271,8 @@ does not discard those results. Planning failures may leave an artifact
 directory without a report; the error paths indicate where to inspect it.
 
 The service is silent by default. Optional `on_message` and `on_agent_step`
-callbacks let callers receive planning diagnostics and agent progress. It runs
-synchronously; background jobs and stored run status are later milestones.
+callbacks let callers receive planning diagnostics and agent progress. Direct
+calls run synchronously; the HTTP API schedules those calls in its worker pool.
 `run_storage.RunPaths` generates a UUID and reserves its directory before
 execution. Directory creation is exclusive, so an ID collision fails instead
 of overwriting an earlier run. There is no automatic cleanup yet.
