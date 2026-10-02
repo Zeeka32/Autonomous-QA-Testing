@@ -2,6 +2,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from openai import OpenAIError
 
 from autonomous_qa.models import (
     ActionResult,
@@ -16,10 +17,14 @@ from autonomous_qa.planner import (
     GeneratedCriterion,
     GeneratedDecision,
     GeneratedPlan,
+    GeneratedSuite,
+    GeneratedSuiteTest,
     PlannerError,
+    PlannerQuotaError,
     generate_action_plan,
     generate_completion_criteria,
     generate_next_decision,
+    generate_test_suite,
 )
 from autonomous_qa.plans import (
     CheckAction,
@@ -42,6 +47,7 @@ from autonomous_qa.plans import (
     UrlContainsAssertion,
     WaitForAction,
 )
+from autonomous_qa.suites import TestKind as SuiteTestKind
 
 
 def make_observation(*, disabled: bool = False) -> PageObservation:
@@ -1027,6 +1033,269 @@ def test_planner_rejects_a_click_with_a_value() -> None:
     )
 
     with pytest.raises(PlannerError, match="empty value"):
+        generate_action_plan(
+            "Click submit",
+            "https://example.com",
+            make_observation(),
+            "test-model",
+            client,
+        )
+
+
+def test_suite_planner_converts_structured_output_to_test_suite() -> None:
+    client = FakeOpenAI(
+        GeneratedSuite(
+            status="suite",
+            tests=[
+                GeneratedSuiteTest(
+                    test_id="page-load",
+                    name="Page loads",
+                    kind="page_load",
+                    goal="",
+                ),
+                GeneratedSuiteTest(
+                    test_id="page-title",
+                    name="Page has a title",
+                    kind="title_present",
+                    goal="",
+                ),
+                GeneratedSuiteTest(
+                    test_id="submit-search",
+                    name="Submit the search form",
+                    kind="browser_goal",
+                    goal="Enter QA in Search and submit the form",
+                ),
+            ],
+            reason="Supported by current executors",
+        )
+    )
+
+    suite = generate_test_suite(
+        request="  Test the basic search workflow  ",
+        starting_url="https://example.com",
+        page_title="Example Domain",
+        observation=make_observation(),
+        model="test-model",
+        client=client,
+    )
+
+    assert suite.url == "https://example.com"
+    assert suite.request == "Test the basic search workflow"
+    assert [test.kind for test in suite.tests] == [
+        SuiteTestKind.PAGE_LOAD,
+        SuiteTestKind.TITLE_PRESENT,
+        SuiteTestKind.BROWSER_GOAL,
+    ]
+    assert suite.tests[0].goal is None
+    assert suite.tests[2].goal == "Enter QA in Search and submit the form"
+    assert client.responses.request["text_format"] is GeneratedSuite
+    supplied_input = json.loads(client.responses.request["input"][1]["content"])
+    assert supplied_input["request"] == "Test the basic search workflow"
+    assert supplied_input["page_title"] == "Example Domain"
+    assert supplied_input["observation"]["elements"][0]["label"] == "Search"
+
+
+def test_gemini_suite_planner_uses_structured_output() -> None:
+    client = FakeGemini(
+        GeneratedSuite(
+            status="suite",
+            tests=[
+                GeneratedSuiteTest(
+                    test_id="page-load",
+                    name="Page loads",
+                    kind="page_load",
+                    goal="",
+                )
+            ],
+            reason="Supported by current executors",
+        )
+    )
+
+    suite = generate_test_suite(
+        request="Run a smoke test",
+        starting_url="https://example.com",
+        page_title="Example Domain",
+        observation=make_observation(),
+        model="gemini-test-model",
+        provider="gemini",
+        client=client,
+    )
+
+    assert suite.tests[0].kind is SuiteTestKind.PAGE_LOAD
+    assert client.completions.request["response_format"] is GeneratedSuite
+    assert client.completions.request["model"] == "gemini-test-model"
+
+
+def test_suite_planner_rejects_a_goal_on_deterministic_test() -> None:
+    client = FakeOpenAI(
+        GeneratedSuite(
+            status="suite",
+            tests=[
+                GeneratedSuiteTest(
+                    test_id="page-load",
+                    name="Page loads",
+                    kind="page_load",
+                    goal="Open the page",
+                )
+            ],
+            reason="Supported by current executors",
+        )
+    )
+
+    with pytest.raises(PlannerError, match="empty goal"):
+        generate_test_suite(
+            "Run a smoke test",
+            "https://example.com",
+            "Example Domain",
+            make_observation(),
+            "test-model",
+            client,
+        )
+
+
+def test_suite_planner_wraps_invalid_domain_models() -> None:
+    client = FakeOpenAI(
+        GeneratedSuite(
+            status="suite",
+            tests=[
+                GeneratedSuiteTest(
+                    test_id="Invalid ID",
+                    name="Page loads",
+                    kind="page_load",
+                    goal="",
+                )
+            ],
+            reason="Supported by current executors",
+        )
+    )
+
+    with pytest.raises(PlannerError, match="invalid suite"):
+        generate_test_suite(
+            "Run a smoke test",
+            "https://example.com",
+            "Example Domain",
+            make_observation(),
+            "test-model",
+            client,
+        )
+
+
+def test_suite_planner_rejects_ungrounded_browser_goal() -> None:
+    client = FakeOpenAI(
+        GeneratedSuite(
+            status="suite",
+            tests=[
+                GeneratedSuiteTest(
+                    test_id="open-menu",
+                    name="Open the menu",
+                    kind="browser_goal",
+                    goal="Open the menu",
+                )
+            ],
+            reason="Supported by current executors",
+        )
+    )
+
+    with pytest.raises(PlannerError, match="without any observed controls"):
+        generate_test_suite(
+            "Test navigation",
+            "https://example.com",
+            "Example Domain",
+            PageObservation(elements=(), truncated=False),
+            "test-model",
+            client,
+        )
+
+
+def test_suite_planner_rejects_blank_request_before_calling_provider() -> None:
+    client = FakeOpenAI(
+        GeneratedSuite(
+            status="suite",
+            tests=[
+                GeneratedSuiteTest(
+                    test_id="page-load",
+                    name="Page loads",
+                    kind="page_load",
+                    goal="",
+                )
+            ],
+            reason="Supported by current executors",
+        )
+    )
+
+    with pytest.raises(PlannerError, match="must not be blank"):
+        generate_test_suite(
+            "   ",
+            "https://example.com",
+            "Example Domain",
+            make_observation(),
+            "test-model",
+            client,
+        )
+
+    assert client.responses.request is None
+
+
+def test_suite_planner_reports_unsupported_request() -> None:
+    client = FakeOpenAI(
+        GeneratedSuite(
+            status="unsupported",
+            tests=[],
+            reason="A full accessibility audit is not supported",
+        )
+    )
+
+    with pytest.raises(PlannerError, match="cannot support this request"):
+        generate_test_suite(
+            "Run a full accessibility audit",
+            "https://example.com",
+            "Example Domain",
+            make_observation(),
+            "test-model",
+            client,
+        )
+
+
+def test_suite_planner_supports_basic_accessibility_test() -> None:
+    client = FakeOpenAI(
+        GeneratedSuite(
+            status="suite",
+            tests=[
+                GeneratedSuiteTest(
+                    test_id="accessibility",
+                    name="Run basic accessibility checks",
+                    kind="accessibility",
+                    goal="",
+                )
+            ],
+            reason="The bounded accessibility executor supports this request",
+        )
+    )
+
+    suite = generate_test_suite(
+        "Test this page for accessibility",
+        "https://example.com",
+        "Example Domain",
+        PageObservation(elements=(), truncated=False),
+        "test-model",
+        client,
+    )
+
+    assert suite.tests[0].kind is SuiteTestKind.ACCESSIBILITY
+    assert suite.tests[0].goal is None
+
+
+def test_planner_classifies_provider_quota_errors() -> None:
+    class QuotaResponses:
+        def parse(self, **kwargs):
+            raise OpenAIError("Error code: 429 - quota exceeded")
+
+    client = SimpleNamespace(responses=QuotaResponses())
+
+    with pytest.raises(
+        PlannerQuotaError,
+        match="planner request failed",
+    ):
         generate_action_plan(
             "Click submit",
             "https://example.com",

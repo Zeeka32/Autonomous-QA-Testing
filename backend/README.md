@@ -11,6 +11,16 @@ The first version is a command-line application. A user provides one URL, the
 application opens it in Chromium, runs deterministic checks, and prints a clear
 pass-or-fail result for each check.
 
+## Version 0.2.0
+
+Version 0.2.0 introduces validated multi-test suites. This release adds
+immutable suite and result models, an executor-registry runner, concrete
+executor adapters, a fixed deterministic suite, AI-generated suites from broad
+requests, a bounded deterministic accessibility audit, suite budgets, a
+reusable application service, and isolated output directories for each run.
+
+See [CHANGELOG.md](CHANGELOG.md) for release highlights and compatibility notes.
+
 ## Initial checks
 
 - Navigation completes successfully.
@@ -51,12 +61,136 @@ The destination directories must already exist. Open a trace with:
 playwright show-trace trace.zip
 ```
 
+Run the fixed multi-test baseline suite:
+
+```bash
+python -m autonomous_qa https://example.com --suite
+```
+
+This runs independent page-load and title-presence test cases without calling
+an AI provider. Each suite invocation gets a unique run ID and saves its report
+and artifacts together:
+
+```text
+qa-runs/
+  <run-id>/
+    report.json
+    artifacts/
+      baseline-screenshot.png
+      baseline-trace.zip
+```
+
+The CLI prints the run ID and output paths. Choose another parent directory
+with `--runs-dir reports`; `--artifacts-dir` remains an alias for this option.
+Both suite modes now create a new subdirectory on every invocation. The
+`--report` option applies only to single-page, action-plan, and single-goal
+modes; for suites, replace it with `--runs-dir`. Existing output is never
+deleted or reused, even when the same request is run again.
+
+Generate a suite from a broad request:
+
+```bash
+python -m autonomous_qa https://example.com \
+  --request "Test the basic navigation"
+```
+
+The CLI first observes the initial page, then makes one structured AI request
+to choose between one and five supported test cases. Generated cases are
+validated as `page_load`, `title_present`, `accessibility`, or
+`browser_goal` before they reach the suite runner. Browser-goal cases reuse
+the existing bounded agent and may make additional requests for completion
+criteria and individual actions. The initial page snapshot is reused by
+deterministic page and title cases, so the page is not opened again for those
+checks.
+
+Every suite uses a shared execution budget. The defaults allow up to five
+tests, two browser-goal cases, ten AI requests, five browser runs, and 120
+seconds. Override them when needed:
+
+```bash
+python -m autonomous_qa https://example.com \
+  --request "Test the basic navigation" \
+  --max-suite-tests 4 \
+  --max-browser-goals 1 \
+  --max-ai-requests 6 \
+  --max-browser-runs 3 \
+  --max-suite-seconds 90
+```
+
+Limits are checked before each test and before starting an AI request or
+browser run; they do not interrupt an operation already in progress. When a
+limit is exhausted, the current and remaining cases are marked `skipped`.
+Provider quota and rate-limit responses also stop the rest of the suite. The
+JSON suite report records the configured limits, usage, elapsed time, and any
+exhaustion reason.
+
+For example:
+
+```bash
+python -m autonomous_qa https://example.com \
+  --request "Test this page for accessibility"
+```
+
+The accessibility executor checks the document language and title, visible
+image alt attributes, accessible names for visible form controls, buttons and
+links, and titles for visible iframes. It records every check in the suite
+report and writes a dedicated screenshot and trace. This is a bounded automated
+audit, not a full WCAG conformance assessment.
+
+The suite planner still cannot generate performance, security,
+visual-regression, API, upload, download, authentication, or full/manual WCAG
+audit tests because deterministic executors for those capabilities do not
+exist. Goal and expectation flags cannot be combined with either suite mode.
+
 The JSON report contains an `actions` array with one record per attempted
 browser action. Each record includes its step number, action kind, status
 (`passed`, `failed`, or `skipped`), duration in milliseconds, URL before and
 after, and a completion or failure message. After the first failed action,
 later actions are recorded as skipped. The runner still captures the final page
 state and writes the report when possible.
+
+## Calling the suite service from Python
+
+Both `--suite` and `--request` delegate to `service.run_qa()`. The service
+handles initial observation, suite generation, budgets, executors, and JSON
+report writing. The CLI handles arguments, terminal output, and exit codes.
+Single-page, action-plan, and single-goal modes retain their existing runners.
+
+```python
+from pathlib import Path
+from autonomous_qa.service import QaRunRequest, run_qa
+
+result = run_qa(QaRunRequest(
+    url="https://example.com",
+    runs_directory=Path("qa-runs"),
+))
+print(result.run_id)
+print(result.report_path)
+print(result.passed)
+print(result.suite_run.results)
+print(result.budget)
+```
+
+Omit `request` to run the deterministic baseline suite. Supply request text
+such as `request="Test basic navigation"` to generate a suite using the selected
+`provider` and `model`. Direct callers must configure provider credentials in
+their environment; the service does not load `.env` or read command-line input.
+
+`QaRunRequest` validates inputs before execution. `QaRunResult` contains the
+run ID, run directory, suite, ordered case results, budget snapshot, and
+report/artifact locations. The JSON report includes the same `run_id`.
+Failed or skipped tests return normally with `passed=False`. Setup, planning,
+and reporting failures raise `QaRunError`, which includes the run ID, output
+paths, budget usage, and any completed suite results. A failed report write
+does not discard those results. Planning failures may leave an artifact
+directory without a report; the error paths indicate where to inspect it.
+
+The service is silent by default. Optional `on_message` and `on_agent_step`
+callbacks let callers receive planning diagnostics and agent progress. It runs
+synchronously; background jobs and stored run status are later milestones.
+`run_storage.RunPaths` generates a UUID and reserves its directory before
+execution. Directory creation is exclusive, so an ID collision fails instead
+of overwriting an earlier run. There is no automatic cleanup yet.
 
 ## Running automated tests
 

@@ -20,7 +20,11 @@ from autonomous_qa.plans import (
     TitleContainsAssertion,
 )
 from autonomous_qa.reporting import write_json_report
-from autonomous_qa.runner import inspect_page_with_agent
+from autonomous_qa.runner import (
+    inspect_accessibility,
+    inspect_page_with_agent,
+)
+from autonomous_qa.service import QaRunRequest, run_qa
 
 
 @pytest.fixture
@@ -64,6 +68,27 @@ def local_test_page(tmp_path):
         server.shutdown()
         thread.join()
         server.server_close()
+
+
+def test_service_runs_baseline_suite_in_real_browser(
+    local_test_page, tmp_path,
+) -> None:
+    request = QaRunRequest(
+        url=local_test_page,
+        runs_directory=tmp_path / "runs",
+    )
+
+    result = run_qa(request)
+
+    assert result.passed
+    assert result.budget.browser_runs_used == 1
+    assert result.budget.ai_requests_used == 0
+    report = json.loads(result.report_path.read_text())
+    assert report["passed"] is True
+    assert report["run_id"] == result.run_id
+    assert len(report["tests"]) == 2
+    assert (result.artifact_directory / "baseline-screenshot.png").is_file()
+    assert (result.artifact_directory / "baseline-trace.zip").is_file()
 
 
 class ScriptedPlanner:
@@ -246,3 +271,30 @@ def test_agent_runner_rejects_generated_criteria_already_true_initially(
     assert inspection.completion_criteria is not None
     assert inspection.completion_criteria.source is CriteriaSource.NONE
     assert "already satisfied" in inspection.completion_criteria.reason
+
+
+def test_accessibility_runner_audits_a_real_page(
+    local_test_page,
+    tmp_path,
+) -> None:
+    screenshot_path = tmp_path / "accessibility.png"
+    trace_path = tmp_path / "accessibility-trace.zip"
+
+    inspection = inspect_accessibility(
+        local_test_page,
+        screenshot_path,
+        trace_path,
+    )
+
+    assert inspection.snapshot.status == 200
+    assert [check.name for check in inspection.checks] == [
+        "Document language",
+        "Document title",
+        "Image alternative text",
+        "Form control names",
+        "Interactive element names",
+        "Frame titles",
+    ]
+    assert all(check.passed for check in inspection.checks)
+    assert screenshot_path.stat().st_size > 0
+    assert trace_path.stat().st_size > 0

@@ -13,9 +13,13 @@ from .agent import (
     DecisionPlanner,
     run_agent_loop,
 )
+from .accessibility import (
+    AccessibilityAuditError,
+    audit_accessibility,
+)
 from .assertions import evaluate_assertions
 from .executor import execute_action, execute_plan
-from .models import PageObservation, PageSnapshot
+from .models import CheckResult, PageObservation, PageSnapshot
 from .observation import observe_page
 from .plans import (
     ActionPlan,
@@ -34,6 +38,12 @@ CriteriaGenerator = Callable[
     [str, str, str, PageObservation],
     CompletionCriteria,
 ]
+
+
+@dataclass(frozen=True)
+class AccessibilityInspectionResult:
+    snapshot: PageSnapshot
+    checks: tuple[CheckResult, ...]
 
 
 @dataclass(frozen=True)
@@ -97,6 +107,66 @@ def inspect_page(
         observation=observation,
         action_results=execution.action_results,
         assertion_results=assertion_results,
+    )
+
+
+def inspect_accessibility(
+    starting_url: str,
+    screenshot_path: Path,
+    trace_path: Path,
+) -> AccessibilityInspectionResult:
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            try:
+                context = browser.new_context()
+                try:
+                    context.tracing.start(
+                        screenshots=True,
+                        snapshots=True,
+                        sources=True,
+                    )
+                    try:
+                        page = context.new_page()
+                        navigation = execute_action(
+                            page,
+                            NavigateAction(url=starting_url),
+                            step_number=1,
+                        )
+                        response = navigation.navigation_response
+                        final_url = page.url
+                        status = (
+                            response.status
+                            if response is not None
+                            else None
+                        )
+                        title = page.title()
+                        observation = observe_page(page)
+                        checks = audit_accessibility(page)
+                        page.screenshot(path=screenshot_path, full_page=True)
+                    finally:
+                        context.tracing.stop(path=trace_path)
+                finally:
+                    context.close()
+            finally:
+                browser.close()
+    except (PlaywrightError, AccessibilityAuditError) as error:
+        error_summary = str(error).splitlines()[0]
+        raise PageInspectionError(
+            f'Could not audit accessibility for '
+            f'"{starting_url}": {error_summary}'
+        ) from error
+
+    snapshot = PageSnapshot(
+        url=final_url,
+        status=status,
+        title=title,
+        observation=observation,
+        action_results=(navigation.action_result,),
+    )
+    return AccessibilityInspectionResult(
+        snapshot=snapshot,
+        checks=checks,
     )
 
 

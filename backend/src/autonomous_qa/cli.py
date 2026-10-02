@@ -4,14 +4,22 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from .agent import AgentStatus, AgentStepResult
+from .agent import (
+    AgentStatus,
+    AgentStepResult,
+)
+from .budgets import (
+    DEFAULT_MAX_AI_REQUESTS,
+    DEFAULT_MAX_BROWSER_GOALS,
+    DEFAULT_MAX_BROWSER_RUNS,
+    DEFAULT_MAX_SUITE_SECONDS,
+    DEFAULT_MAX_SUITE_TESTS,
+    SuiteBudgetValidationError,
+    SuiteExecutionPolicy,
+)
 from .checks import run_checks
 from .plan_loader import PlanLoadError, load_action_plan
-from .planner import (
-    PlannerError,
-    generate_completion_criteria,
-    generate_next_decision,
-)
+from .planner import PlannerError
 from .plans import (
     ActionPlan,
     ElementAttributeContainsAssertion,
@@ -29,19 +37,26 @@ from .plans import (
     TitleContainsAssertion,
     UrlContainsAssertion,
 )
-from .reporting import ReportWriteError, write_json_report
+from .reporting import (
+    ReportWriteError,
+    write_json_report,
+)
 from .runner import (
     PageInspectionError,
     inspect_page,
     inspect_page_with_agent,
 )
+from .service import (
+    DEFAULT_MODELS,
+    QaRunError,
+    QaRunRequest,
+    create_ai_callbacks,
+    run_qa,
+)
+from .suites import SuiteRunResult
 
 
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
-DEFAULT_MODELS = {
-    "gemini": "gemini-3.8-flash",
-    "openai": "gpt-5.6-luna",
-}
 
 
 def _print_agent_step(step: AgentStepResult) -> None:
@@ -73,6 +88,41 @@ def _print_agent_step(step: AgentStepResult) -> None:
         )
 
 
+def _print_message(message: str) -> None:
+    print(message, flush=True)
+
+
+def _print_suite_results(suite_run: SuiteRunResult) -> None:
+    for result in suite_run.results:
+        print(
+            f"[{result.status.upper()}] {result.test_id}: "
+            f"{result.message} ({result.duration_ms:.3f} ms)"
+        )
+
+
+def _run_suite(request: QaRunRequest) -> int:
+    try:
+        result = run_qa(
+            request,
+            on_message=_print_message,
+            on_agent_step=_print_agent_step,
+        )
+    except QaRunError as error:
+        if error.suite_run is not None:
+            _print_suite_results(error.suite_run)
+        print(f"ERROR: {error}", file=sys.stderr)
+        print(
+            f"Run {error.run_id} output location: {error.run_directory}",
+            file=sys.stderr,
+        )
+        return 2
+
+    _print_suite_results(result.suite_run)
+    print(f"Suite report written to: {result.report_path}")
+    print(f"Suite artifacts written to: {result.artifact_directory}")
+    return 0 if result.passed else 1
+
+
 def main() -> int:
     load_dotenv(dotenv_path=ENV_FILE, override=False)
 
@@ -84,6 +134,60 @@ def main() -> int:
     parser.add_argument(
         "--goal",
         help="natural-language goal for the AI planner",
+    )
+    parser.add_argument(
+        "--request",
+        help="broad request used by AI to generate a test suite",
+    )
+    parser.add_argument(
+        "--suite",
+        action="store_true",
+        help="run the fixed baseline multi-test suite",
+    )
+    parser.add_argument(
+        "--max-suite-tests",
+        type=int,
+        default=DEFAULT_MAX_SUITE_TESTS,
+        help=(
+            "maximum tests in a suite "
+            f"(default: {DEFAULT_MAX_SUITE_TESTS})"
+        ),
+    )
+    parser.add_argument(
+        "--max-browser-goals",
+        type=int,
+        default=DEFAULT_MAX_BROWSER_GOALS,
+        help=(
+            "maximum AI browser-goal tests in a suite "
+            f"(default: {DEFAULT_MAX_BROWSER_GOALS})"
+        ),
+    )
+    parser.add_argument(
+        "--max-ai-requests",
+        type=int,
+        default=DEFAULT_MAX_AI_REQUESTS,
+        help=(
+            "maximum AI requests in a suite "
+            f"(default: {DEFAULT_MAX_AI_REQUESTS})"
+        ),
+    )
+    parser.add_argument(
+        "--max-browser-runs",
+        type=int,
+        default=DEFAULT_MAX_BROWSER_RUNS,
+        help=(
+            "maximum browser launches in a suite "
+            f"(default: {DEFAULT_MAX_BROWSER_RUNS})"
+        ),
+    )
+    parser.add_argument(
+        "--max-suite-seconds",
+        type=float,
+        default=DEFAULT_MAX_SUITE_SECONDS,
+        help=(
+            "maximum suite duration in seconds "
+            f"(default: {DEFAULT_MAX_SUITE_SECONDS:g})"
+        ),
     )
     parser.add_argument(
         "--provider",
@@ -154,8 +258,17 @@ def main() -> int:
     parser.add_argument(
         "--report",
         type=Path,
-        default=Path("qa-report.json"),
-        help="path for the JSON report (default: qa-report.json)",
+        help="single-run JSON report path (default: qa-report.json)",
+    )
+    parser.add_argument(
+        "--runs-dir",
+        "--artifacts-dir",
+        dest="runs_dir",
+        type=Path,
+        help=(
+            "parent directory for isolated suite runs (default: qa-runs); "
+            "--artifacts-dir is an alias"
+        ),
     )
     parser.add_argument(
         "--screenshot",
@@ -172,10 +285,43 @@ def main() -> int:
 
     args = parser.parse_args()
 
+    suite_mode = args.suite or args.request is not None
+    if suite_mode and args.report is not None:
+        parser.error(
+            "suite reports are saved per run; use --runs-dir instead of --report"
+        )
+    if not suite_mode and args.runs_dir is not None:
+        parser.error("--runs-dir can only be used with --suite or --request")
+    if args.report is None:
+        args.report = Path("qa-report.json")
+
+    try:
+        suite_policy = SuiteExecutionPolicy(
+            max_tests=args.max_suite_tests,
+            max_browser_goals=args.max_browser_goals,
+            max_ai_requests=args.max_ai_requests,
+            max_browser_runs=args.max_browser_runs,
+            max_duration_seconds=args.max_suite_seconds,
+        )
+    except SuiteBudgetValidationError as error:
+        parser.error(str(error))
+
     if (args.url is None) == (args.plan is None):
         parser.error("provide either a URL or --plan, but not both")
     if args.goal is not None and args.plan is not None:
         parser.error("--goal can only be used with a URL, not --plan")
+    if args.request is not None and args.plan is not None:
+        parser.error("--request can only be used with a URL, not --plan")
+    if args.request is not None and args.goal is not None:
+        parser.error("--request and --goal cannot be used together")
+    if args.request is not None and args.suite:
+        parser.error("--request and --suite cannot be used together")
+    if args.request is not None and not args.request.strip():
+        parser.error("--request must not be blank")
+    if args.suite and args.plan is not None:
+        parser.error("--suite can only be used with a URL, not --plan")
+    if args.suite and args.goal is not None:
+        parser.error("--goal cannot be used with --suite yet")
     if (
         args.expect_url_contains is not None
         and not args.expect_url_contains.strip()
@@ -236,6 +382,26 @@ def main() -> int:
         parser.error(
             "--expect-element-text selector and text must not be blank"
         )
+    expectation_values = (
+        args.expect_url_contains,
+        args.expect_title_contains,
+        args.expect_element_visible,
+        args.expect_element_hidden,
+        args.expect_element_enabled,
+        args.expect_element_disabled,
+        args.expect_element_checked,
+        args.expect_element_unchecked,
+        args.expect_element_value,
+        args.expect_element_count,
+        args.expect_element_attribute,
+        args.expect_element_text,
+    )
+    if (args.suite or args.request is not None) and any(
+        value is not None for value in expectation_values
+    ):
+        parser.error(
+            "expectation options cannot be used with suite modes yet"
+        )
 
     try:
         if args.plan is not None:
@@ -248,6 +414,21 @@ def main() -> int:
 
     requested_url = plan.actions[0].url
     print(f"processing url: {requested_url}", flush=True)
+
+    if args.suite or args.request is not None:
+        try:
+            request = QaRunRequest(
+                url=requested_url,
+                request=args.request,
+                provider=args.provider,
+                model=args.model,
+                budget_policy=suite_policy,
+                runs_directory=args.runs_dir or Path("qa-runs"),
+            )
+        except ValueError as error:
+            print(f"ERROR: {error}", file=sys.stderr)
+            return 2
+        return _run_suite(request)
 
     additional_assertions = []
     if args.expect_url_contains is not None:
@@ -315,76 +496,11 @@ def main() -> int:
                 flush=True,
             )
 
-            ai_request_count = 0
-            planning_request_count = 0
-
-            def planner(
-                goal,
-                current_url,
-                observation,
-                previous_action_result,
-                previous_verification_results,
-                frozen_criteria,
-            ):
-                nonlocal ai_request_count, planning_request_count
-                ai_request_count += 1
-                planning_request_count += 1
-                request_number = ai_request_count
-                print(
-                    f"[AI REQUEST {request_number}] "
-                    f"plan agent decision {planning_request_count}",
-                    flush=True,
-                )
-                decision = generate_next_decision(
-                    goal,
-                    current_url,
-                    observation,
-                    model,
-                    provider=args.provider,
-                    previous_action_result=previous_action_result,
-                    previous_verification_results=(
-                        previous_verification_results
-                    ),
-                    completion_criteria=frozen_criteria,
-                )
-                print(
-                    f"[AI RESPONSE {request_number}] "
-                    f"decision={decision.status}: {decision.reason}",
-                    flush=True,
-                )
-                return decision
-
-            def criteria_generator(
-                goal,
-                current_url,
-                page_title,
-                observation,
-            ):
-                nonlocal ai_request_count
-                ai_request_count += 1
-                request_number = ai_request_count
-                print(
-                    f"[AI REQUEST {request_number}] "
-                    "generate completion criteria",
-                    flush=True,
-                )
-                criteria = generate_completion_criteria(
-                    goal,
-                    current_url,
-                    page_title,
-                    observation,
-                    model,
-                    provider=args.provider,
-                )
-                print(
-                    f"[AI RESPONSE {request_number}] "
-                    f"criteria={len(criteria.assertions)} "
-                    f"source={criteria.source}: {criteria.reason}",
-                    flush=True,
-                )
-                for criterion in criteria.assertions:
-                    print(f"  criterion: {criterion}", flush=True)
-                return criteria
+            planner, criteria_generator = create_ai_callbacks(
+                args.provider,
+                model,
+                on_message=_print_message,
+            )
 
             inspection = inspect_page_with_agent(
                 requested_url,

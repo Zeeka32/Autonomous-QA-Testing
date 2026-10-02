@@ -2,6 +2,10 @@ import json
 
 import pytest
 
+from autonomous_qa.budgets import (
+    SuiteBudgetTracker,
+    SuiteExecutionPolicy,
+)
 from autonomous_qa.agent import (
     AgentRunResult,
     AgentStatus,
@@ -15,7 +19,19 @@ from autonomous_qa.models import (
     PageSnapshot,
 )
 from autonomous_qa.planner import DecisionStatus
-from autonomous_qa.reporting import ReportWriteError, write_json_report
+from autonomous_qa.reporting import (
+    ReportWriteError,
+    write_json_report,
+    write_suite_json_report,
+)
+from autonomous_qa.suites import (
+    SuiteRunResult,
+    TestCase as SuiteCase,
+    TestCaseResult as SuiteCaseResult,
+    TestKind as SuiteTestKind,
+    TestStatus as CaseStatus,
+    TestSuite as SuiteDefinition,
+)
 
 
 def test_write_json_report_saves_results_and_artifact_paths(tmp_path) -> None:
@@ -250,3 +266,126 @@ def test_report_passes_when_agent_recovers_and_completes(tmp_path) -> None:
     assert report["actions"][0]["status"] == "failed"
     assert report["agent"]["status"] == "complete"
     assert report["agent"]["recoveries_used"] == 1
+
+
+def make_suite_run_result() -> SuiteRunResult:
+    suite = SuiteDefinition(
+        url="https://example.com",
+        request="Run baseline checks",
+        tests=(
+            SuiteCase(
+                test_id="page-load",
+                name="Page loads successfully",
+                kind=SuiteTestKind.PAGE_LOAD,
+            ),
+        ),
+    )
+    return SuiteRunResult(
+        suite=suite,
+        results=(
+            SuiteCaseResult(
+                test_id="page-load",
+                kind=SuiteTestKind.PAGE_LOAD,
+                status=CaseStatus.PASSED,
+                duration_ms=12.5,
+                message="Page returned HTTP 200",
+                checks=(
+                    CheckResult(
+                        name="HTTP status",
+                        passed=True,
+                        message="Page returned HTTP 200",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+
+def test_write_suite_json_report_saves_each_case(tmp_path) -> None:
+    report_path = tmp_path / "suite-report.json"
+    artifact_directory = tmp_path / "artifacts"
+
+    write_suite_json_report(
+        report_path,
+        make_suite_run_result(),
+        artifact_directory,
+    )
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report == {
+        "requested_url": "https://example.com",
+        "request": "Run baseline checks",
+        "passed": True,
+        "tests": [
+            {
+                "test_id": "page-load",
+                "name": "Page loads successfully",
+                "kind": "page_load",
+                "goal": None,
+                "status": "passed",
+                "duration_ms": 12.5,
+                "message": "Page returned HTTP 200",
+                "checks": [
+                    {
+                        "name": "HTTP status",
+                        "passed": True,
+                        "message": "Page returned HTTP 200",
+                    }
+                ],
+            }
+        ],
+        "artifacts": {
+            "directory": str(artifact_directory),
+        },
+    }
+
+
+def test_write_suite_json_report_translates_file_errors(tmp_path) -> None:
+    report_path = tmp_path / "missing-directory" / "report.json"
+
+    with pytest.raises(ReportWriteError, match="Could not write report"):
+        write_suite_json_report(
+            report_path,
+            make_suite_run_result(),
+            tmp_path / "artifacts",
+        )
+
+
+def test_write_suite_json_report_includes_budget_snapshot(tmp_path) -> None:
+    report_path = tmp_path / "suite-report.json"
+    policy = SuiteExecutionPolicy(
+        max_tests=4,
+        max_browser_goals=1,
+        max_ai_requests=3,
+        max_browser_runs=2,
+        max_duration_seconds=30.0,
+    )
+    budget = SuiteBudgetTracker(policy, clock=lambda: 10.0)
+    budget.consume_ai_request()
+    budget.consume_browser_run()
+
+    write_suite_json_report(
+        report_path,
+        make_suite_run_result(),
+        tmp_path / "artifacts",
+        budget_snapshot=budget.snapshot(),
+    )
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["budget"] == {
+        "limits": {
+            "max_tests": 4,
+            "max_browser_goals": 1,
+            "max_ai_requests": 3,
+            "max_browser_runs": 2,
+            "max_duration_seconds": 30.0,
+            "stop_on_provider_quota": True,
+        },
+        "usage": {
+            "ai_requests": 1,
+            "browser_runs": 1,
+            "elapsed_seconds": 0.0,
+        },
+        "exhausted": False,
+        "reason": None,
+    }

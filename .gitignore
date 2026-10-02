@@ -14,3 +14,5 @@ __pycache__/
 qa-report.json
 screenshot.png
 trace.zip
+qa-artifacts/
+qa-runs/

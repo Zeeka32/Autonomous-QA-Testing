@@ -1,6 +1,10 @@
 import json
 import sys
 
+import pytest
+
+from autonomous_qa import service
+
 from autonomous_qa import cli
 from autonomous_qa.agent import (
     AgentRunResult,
@@ -30,9 +34,18 @@ from autonomous_qa.plans import (
     TitleContainsAssertion,
     UrlContainsAssertion,
 )
-from autonomous_qa.planner import DecisionStatus, PlannerDecision
+from autonomous_qa.planner import (
+    DecisionStatus,
+    PlannerDecision,
+    PlannerError,
+)
 from autonomous_qa.reporting import ReportWriteError
 from autonomous_qa.runner import AgentInspectionResult, PageInspectionError
+from autonomous_qa.suites import (
+    TestCase as SuiteCase,
+    TestKind as SuiteTestKind,
+    TestSuite as SuiteDefinition,
+)
 
 
 def set_cli_arguments(monkeypatch, tmp_path, url: str) -> None:
@@ -516,7 +529,7 @@ def test_cli_runs_a_goal_through_the_agent_loop(
             ),
         )
 
-    monkeypatch.setattr(cli, "generate_next_decision", generate_decision)
+    monkeypatch.setattr(service, "generate_next_decision", generate_decision)
     monkeypatch.setattr(cli, "inspect_page_with_agent", inspect_with_agent)
 
     exit_code = cli.main()
@@ -628,3 +641,617 @@ def test_cli_fails_when_agent_completion_is_unverified(
     assert exit_code == 1
     assert report["passed"] is False
     assert report["agent"]["status"] == "unverified"
+
+
+def test_cli_runs_the_fixed_baseline_suite(
+    monkeypatch,
+    tmp_path,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "autonomous-qa",
+            "https://example.com",
+            "--suite",
+            "--runs-dir",
+            str(tmp_path / "runs"),
+        ],
+    )
+    inspection_calls = []
+
+    def inspect(plan, screenshot_path, trace_path):
+        inspection_calls.append((plan, screenshot_path, trace_path))
+        return PageSnapshot(
+            url="https://example.com/",
+            status=200,
+            title="Example Domain",
+        )
+
+    monkeypatch.setattr(service, "inspect_page", inspect)
+
+    exit_code = cli.main()
+
+    output = capsys.readouterr().out
+    report_path = next((tmp_path / "runs").glob("*/report.json"))
+    artifact_directory = report_path.parent / "artifacts"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert len(inspection_calls) == 1
+    plan, screenshot_path, trace_path = inspection_calls[0]
+    assert plan.actions[0].url == "https://example.com"
+    assert screenshot_path == artifact_directory / "baseline-screenshot.png"
+    assert trace_path == artifact_directory / "baseline-trace.zip"
+    assert "[PASSED] page-load: Page returned HTTP 200" in output
+    assert '[PASSED] page-title: Page title is "Example Domain"' in output
+    assert f"Run ID: {report['run_id']}" in output
+    assert report_path.parent.name == report["run_id"]
+    assert report["passed"] is True
+    assert [test["test_id"] for test in report["tests"]] == [
+        "page-load",
+        "page-title",
+    ]
+    assert report["artifacts"]["directory"] == str(artifact_directory)
+    assert report["budget"]["usage"]["ai_requests"] == 0
+    assert report["budget"]["usage"]["browser_runs"] == 1
+    assert report["budget"]["exhausted"] is False
+
+
+def test_cli_suite_returns_one_when_a_case_fails(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "autonomous-qa",
+            "https://example.com",
+            "--suite",
+            "--runs-dir",
+            str(tmp_path / "runs"),
+        ],
+    )
+    monkeypatch.setattr(
+        service,
+        "inspect_page",
+        lambda plan, screenshot, trace: PageSnapshot(
+            url="https://example.com/",
+            status=503,
+            title="",
+        ),
+    )
+
+    exit_code = cli.main()
+
+    report_path = next((tmp_path / "runs").glob("*/report.json"))
+    artifact_directory = report_path.parent / "artifacts"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert exit_code == 1
+    assert report["passed"] is False
+    assert [test["status"] for test in report["tests"]] == [
+        "failed",
+        "failed",
+    ]
+
+
+def test_cli_suite_rejects_goal_mode(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "autonomous-qa",
+            "https://example.com",
+            "--suite",
+            "--goal",
+            "Open the menu",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as error:
+        cli.main()
+
+    assert error.value.code == 2
+    assert "--goal cannot be used with --suite yet" in capsys.readouterr().err
+
+
+def test_cli_suite_returns_two_when_report_writing_fails(
+    monkeypatch,
+    tmp_path,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "autonomous-qa",
+            "https://example.com",
+            "--suite",
+            "--runs-dir",
+            str(tmp_path / "runs"),
+        ],
+    )
+    monkeypatch.setattr(
+        service,
+        "inspect_page",
+        lambda plan, screenshot, trace: PageSnapshot(
+            url="https://example.com/",
+            status=200,
+            title="Example Domain",
+        ),
+    )
+
+    def fail_report(*args, **kwargs):
+        raise ReportWriteError("Disk is unavailable")
+
+    monkeypatch.setattr(service, "write_suite_json_report", fail_report)
+
+    exit_code = cli.main()
+
+    assert exit_code == 2
+    assert "ERROR: Disk is unavailable" in capsys.readouterr().err
+
+
+def test_cli_generates_and_runs_a_suite_from_a_broad_request(
+    monkeypatch,
+    tmp_path,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "autonomous-qa",
+            "https://example.com",
+            "--request",
+            "Run basic smoke tests",
+            "--model",
+            "test-model",
+            "--runs-dir",
+            str(tmp_path / "runs"),
+        ],
+    )
+    observation = PageObservation(elements=(), truncated=False)
+    inspection_calls = []
+
+    def inspect(plan, screenshot_path, trace_path):
+        inspection_calls.append((plan, screenshot_path, trace_path))
+        return PageSnapshot(
+            url="https://example.com/",
+            status=200,
+            title="Example Domain",
+            observation=observation,
+        )
+
+    generation_calls = []
+
+    def generate_suite(
+        request,
+        starting_url,
+        page_title,
+        supplied_observation,
+        model,
+        client=None,
+        provider="openai",
+    ):
+        generation_calls.append(
+            (
+                request,
+                starting_url,
+                page_title,
+                supplied_observation,
+                model,
+                provider,
+            )
+        )
+        return SuiteDefinition(
+            url=starting_url,
+            request=request,
+            tests=(
+                SuiteCase(
+                    test_id="page-load",
+                    name="Page loads",
+                    kind=SuiteTestKind.PAGE_LOAD,
+                ),
+                SuiteCase(
+                    test_id="page-title",
+                    name="Page has a title",
+                    kind=SuiteTestKind.TITLE_PRESENT,
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(service, "inspect_page", inspect)
+    monkeypatch.setattr(service, "generate_test_suite", generate_suite)
+
+    exit_code = cli.main()
+
+    output = capsys.readouterr().out
+    report_path = next((tmp_path / "runs").glob("*/report.json"))
+    artifact_directory = report_path.parent / "artifacts"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert len(inspection_calls) == 1
+    assert inspection_calls[0][1:] == (
+        artifact_directory / "baseline-screenshot.png",
+        artifact_directory / "baseline-trace.zip",
+    )
+    assert generation_calls == [
+        (
+            "Run basic smoke tests",
+            "https://example.com",
+            "Example Domain",
+            observation,
+            "test-model",
+            "gemini",
+        )
+    ]
+    assert "[AI REQUEST 1] generate test suite" in output
+    assert "[AI RESPONSE 1] generated 2 tests" in output
+    assert report["request"] == "Run basic smoke tests"
+    assert [test["kind"] for test in report["tests"]] == [
+        "page_load",
+        "title_present",
+    ]
+    assert report["budget"]["usage"]["ai_requests"] == 1
+    assert report["budget"]["usage"]["browser_runs"] == 1
+    assert report["budget"]["exhausted"] is False
+
+
+def test_cli_generated_browser_goal_uses_existing_agent_callbacks(
+    monkeypatch,
+    tmp_path,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "autonomous-qa",
+            "https://example.com",
+            "--request",
+            "Test the main interaction",
+            "--model",
+            "test-model",
+            "--runs-dir",
+            str(tmp_path / "runs"),
+        ],
+    )
+    observation = PageObservation(elements=(), truncated=False)
+    monkeypatch.setattr(
+        service,
+        "inspect_page",
+        lambda *args: PageSnapshot(
+            url="https://example.com/",
+            status=200,
+            title="Example Domain",
+            observation=observation,
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "generate_test_suite",
+        lambda request, starting_url, *args, **kwargs: SuiteDefinition(
+            url=starting_url,
+            request=request,
+            tests=(
+                SuiteCase(
+                    test_id="complete-workflow",
+                    name="Complete the workflow",
+                    kind=SuiteTestKind.BROWSER_GOAL,
+                    goal="Complete the main workflow",
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "generate_completion_criteria",
+        lambda *args, **kwargs: CompletionCriteria(
+            assertions=(TitleContainsAssertion(value="Complete"),),
+            source=CriteriaSource.AI_GENERATED,
+            reason="The final title proves completion",
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "generate_next_decision",
+        lambda *args, **kwargs: PlannerDecision(
+            status=DecisionStatus.COMPLETE,
+            action=None,
+            reason="The workflow is complete",
+        ),
+    )
+
+    def inspect_with_agent(
+        starting_url,
+        goal,
+        planner,
+        assertions,
+        screenshot,
+        trace,
+        criteria_generator,
+        agent_step_reporter,
+    ):
+        criteria = criteria_generator(
+            goal,
+            starting_url,
+            "Example Domain",
+            observation,
+        )
+        decision = planner(
+            goal,
+            starting_url,
+            observation,
+            None,
+            (),
+            criteria.assertions,
+        )
+        assert decision.status is DecisionStatus.COMPLETE
+        return AgentInspectionResult(
+            snapshot=PageSnapshot(
+                url=starting_url,
+                status=200,
+                title="Complete",
+                observation=observation,
+                assertion_results=(
+                    CheckResult(
+                        name="Expected title",
+                        passed=True,
+                        message='Page title contains "Complete"',
+                    ),
+                ),
+            ),
+            agent_run=AgentRunResult(
+                status=AgentStatus.COMPLETE,
+                reason=decision.reason,
+                steps=(),
+                action_results=(),
+            ),
+            completion_criteria=criteria,
+        )
+
+    monkeypatch.setattr(service, "inspect_page_with_agent", inspect_with_agent)
+
+    exit_code = cli.main()
+
+    output = capsys.readouterr().out
+    report_path = next((tmp_path / "runs").glob("*/report.json"))
+    artifact_directory = report_path.parent / "artifacts"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert "[AI REQUEST 1] generate test suite" in output
+    assert "[AI REQUEST 2] generate completion criteria" in output
+    assert "[AI REQUEST 3] plan agent decision 1" in output
+    assert report["tests"][0]["kind"] == "browser_goal"
+    assert report["tests"][0]["status"] == "passed"
+    assert report["budget"]["usage"]["ai_requests"] == 3
+    assert report["budget"]["usage"]["browser_runs"] == 2
+
+
+def test_cli_returns_two_when_suite_generation_fails(
+    monkeypatch,
+    tmp_path,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "autonomous-qa",
+            "https://example.com",
+            "--request",
+            "Test unsupported behavior",
+            "--runs-dir",
+            str(tmp_path / "runs"),
+        ],
+    )
+    monkeypatch.setattr(
+        service,
+        "inspect_page",
+        lambda *args: PageSnapshot(
+            url="https://example.com/",
+            status=200,
+            title="Example Domain",
+            observation=PageObservation(elements=(), truncated=False),
+        ),
+    )
+
+    def fail_generation(*args, **kwargs):
+        raise PlannerError("Generated suite is unsupported")
+
+    monkeypatch.setattr(service, "generate_test_suite", fail_generation)
+
+    exit_code = cli.main()
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "ERROR: Generated suite is unsupported" in captured.err
+    assert not list((tmp_path / "runs").glob("*/report.json"))
+    run_directory = next((tmp_path / "runs").iterdir())
+    assert run_directory.name in captured.err
+
+
+def test_cli_rejects_request_with_fixed_suite(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "autonomous-qa",
+            "https://example.com",
+            "--request",
+            "Run smoke tests",
+            "--suite",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as error:
+        cli.main()
+
+    assert error.value.code == 2
+    assert "--request and --suite cannot be used together" in (
+        capsys.readouterr().err
+    )
+
+
+def test_cli_suite_skips_cases_when_browser_run_budget_is_zero(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    inspection_calls = []
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "autonomous-qa",
+            "https://example.com",
+            "--suite",
+            "--max-browser-runs",
+            "0",
+            "--runs-dir",
+            str(tmp_path / "runs"),
+        ],
+    )
+
+    def inspect(*args):
+        inspection_calls.append(args)
+        raise AssertionError("browser should not launch")
+
+    monkeypatch.setattr(service, "inspect_page", inspect)
+
+    exit_code = cli.main()
+
+    report_path = next((tmp_path / "runs").glob("*/report.json"))
+    artifact_directory = report_path.parent / "artifacts"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert exit_code == 1
+    assert inspection_calls == []
+    assert [test["status"] for test in report["tests"]] == [
+        "skipped",
+        "skipped",
+    ]
+    assert report["budget"]["exhausted"] is True
+    assert "browser-run budget exhausted" in report["budget"]["reason"]
+
+
+def test_cli_generated_suite_stops_before_ai_when_budget_is_zero(
+    monkeypatch,
+    tmp_path,
+    capsys,
+) -> None:
+    generation_calls = []
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "autonomous-qa",
+            "https://example.com",
+            "--request",
+            "Run smoke tests",
+            "--max-ai-requests",
+            "0",
+            "--runs-dir",
+            str(tmp_path / "runs"),
+        ],
+    )
+    monkeypatch.setattr(
+        service,
+        "inspect_page",
+        lambda *args: PageSnapshot(
+            url="https://example.com/",
+            status=200,
+            title="Example Domain",
+            observation=PageObservation(elements=(), truncated=False),
+        ),
+    )
+
+    def generate_suite(*args, **kwargs):
+        generation_calls.append((args, kwargs))
+        raise AssertionError("AI should not be called")
+
+    monkeypatch.setattr(service, "generate_test_suite", generate_suite)
+
+    exit_code = cli.main()
+
+    assert exit_code == 2
+    assert generation_calls == []
+    assert "Suite AI-request budget exhausted" in capsys.readouterr().err
+
+
+def test_cli_rejects_invalid_suite_budget(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "autonomous-qa",
+            "https://example.com",
+            "--suite",
+            "--max-suite-tests",
+            "0",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as error:
+        cli.main()
+
+    assert error.value.code == 2
+    assert "max_tests must be an integer of at least 1" in (
+        capsys.readouterr().err
+    )
+
+
+@pytest.mark.parametrize("directory_args, root", [
+    ([], "qa-runs"),
+    (["--runs-dir", "custom"], "custom"),
+    (["--artifacts-dir", "custom"], "custom"),
+])
+def test_cli_repeated_suites_keep_both_reports(
+    monkeypatch, tmp_path, capsys, directory_args, root,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", [
+        "autonomous-qa", "https://example.com", "--suite", *directory_args,
+    ])
+    monkeypatch.setattr(service, "inspect_page", lambda *args: PageSnapshot(
+        url="https://example.com/", status=200, title="Example",
+    ))
+
+    assert cli.main() == 0
+    first_report = next((tmp_path / root).glob("*/report.json"))
+    original = first_report.read_bytes()
+    assert cli.main() == 0
+
+    assert first_report.read_bytes() == original
+    reports = list((tmp_path / root).glob("*/report.json"))
+    assert len(reports) == 2
+    output = capsys.readouterr().out
+    for path in reports:
+        report = json.loads(path.read_text())
+        assert report["run_id"] == path.parent.name
+        assert f"Run ID: {path.parent.name}" in output
+
+
+def test_cli_suite_rejects_shared_report_path(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sys, "argv", [
+        "autonomous-qa", "https://example.com", "--suite",
+        "--report", "shared.json",
+    ])
+
+    with pytest.raises(SystemExit) as caught:
+        cli.main()
+
+    assert caught.value.code == 2
+    assert "use --runs-dir instead of --report" in capsys.readouterr().err
+
+
+def test_cli_rejects_runs_directory_outside_suite_mode(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", [
+        "autonomous-qa", "https://example.com", "--runs-dir", "custom",
+    ])
+
+    with pytest.raises(SystemExit) as caught:
+        cli.main()
+
+    assert caught.value.code == 2
+    assert "only be used with --suite or --request" in capsys.readouterr().err
