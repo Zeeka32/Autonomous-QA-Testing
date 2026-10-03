@@ -1,6 +1,6 @@
 import pytest
 
-from autonomous_qa.budgets import (
+from autonomous_qa.suite.budgets import (
     SuiteBudgetExceeded,
     SuiteBudgetTracker,
     SuiteBudgetValidationError,

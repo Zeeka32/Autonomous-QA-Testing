@@ -1,4 +1,4 @@
-from .models import CheckResult, PageSnapshot
+from ..models import CheckResult, PageSnapshot
 
 
 def check_http_status(snapshot: PageSnapshot) -> CheckResult:

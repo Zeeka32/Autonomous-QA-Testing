@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .agent import AgentStepReporter, DecisionPlanner
-from .budgets import (
+from .suite.budgets import (
     SuiteBudgetExceeded,
     SuiteBudgetSnapshot,
     SuiteBudgetTracker,
@@ -20,16 +20,16 @@ from .planner import (
 from .plans import ActionPlan, NavigateAction
 from .reporting import ReportWriteError, write_suite_json_report
 from .run_storage import RunPaths
-from .runner import (
+from .browser.runner import (
     CriteriaGenerator,
     PageInspectionError,
     inspect_accessibility,
     inspect_page,
     inspect_page_with_agent,
 )
-from .suite_executors import create_suite_executors
-from .suite_runner import SuiteRunnerError, run_test_suite
-from .suites import (
+from .suite.suite_executors import create_suite_executors
+from .suite.suite_runner import SuiteRunnerError, run_test_suite
+from .suite.suites import (
     MAX_SUITE_REQUEST_LENGTH,
     SuiteRunResult,
     TestCase,

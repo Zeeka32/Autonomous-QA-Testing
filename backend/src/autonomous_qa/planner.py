@@ -42,7 +42,7 @@ from .plans import (
     UrlContainsAssertion,
     WaitForAction,
 )
-from .suites import (
+from .suite.suites import (
     MAX_SUITE_REQUEST_LENGTH,
     SuiteValidationError,
     TestCase,

@@ -21,6 +21,23 @@ reusable application service, and isolated output directories for each run.
 
 See [CHANGELOG.md](CHANGELOG.md) for release highlights and compatibility notes.
 
+## Code layout
+
+`autonomous_qa` is the importable Python package, not an AI-specific project
+convention. Its subpackages group related responsibilities:
+
+- `browser/` owns Playwright execution, page observation, deterministic checks,
+  assertions, accessibility checks, and browser-session runners.
+- `suite/` defines test suites, runs their cases, connects test types to browser
+  runners, and enforces execution budgets.
+- The package root holds shared models and plans, AI planning and the agent
+  loop, reporting, the application service, and the `cli.py` and `api.py`
+  entry points. `run_jobs.py` supports background API requests.
+
+The CLI and API both use `service.py`; neither contains the underlying QA
+engine. Imports should use the new module paths, such as
+`autonomous_qa.browser.runner` and `autonomous_qa.suite.suites`.
+
 ## Version 0.3.0
 
 Version 0.3.0 adds a local HTTP API. It accepts runs immediately, executes them

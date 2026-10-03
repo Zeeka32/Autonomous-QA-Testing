@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from autonomous_qa.agent import AgentStatus
 from autonomous_qa.api import create_app
-from autonomous_qa.checks import run_checks
+from autonomous_qa.browser.checks import run_checks
 from autonomous_qa.models import ActionResult, CheckResult, PageObservation
 from autonomous_qa.planner import DecisionStatus, PlannerDecision
 from autonomous_qa.plans import (
@@ -23,7 +23,7 @@ from autonomous_qa.plans import (
     TitleContainsAssertion,
 )
 from autonomous_qa.reporting import write_json_report
-from autonomous_qa.runner import (
+from autonomous_qa.browser.runner import (
     inspect_accessibility,
     inspect_page_with_agent,
 )

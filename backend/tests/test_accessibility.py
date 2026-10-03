@@ -1,6 +1,6 @@
 import pytest
 
-from autonomous_qa.accessibility import (
+from autonomous_qa.browser.accessibility import (
     AccessibilityAuditError,
     audit_accessibility,
 )

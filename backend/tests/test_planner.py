@@ -47,7 +47,7 @@ from autonomous_qa.plans import (
     UrlContainsAssertion,
     WaitForAction,
 )
-from autonomous_qa.suites import TestKind as SuiteTestKind
+from autonomous_qa.suite.suites import TestKind as SuiteTestKind
 
 
 def make_observation(*, disabled: bool = False) -> PageObservation:

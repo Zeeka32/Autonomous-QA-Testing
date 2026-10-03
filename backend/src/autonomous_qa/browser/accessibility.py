@@ -1,6 +1,6 @@
 from playwright.sync_api import Page
 
-from .models import CheckResult
+from ..models import CheckResult
 
 
 MAX_AUDIT_MESSAGE_LENGTH = 2_000

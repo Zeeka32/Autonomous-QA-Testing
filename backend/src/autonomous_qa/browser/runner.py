@@ -5,7 +5,7 @@ from pathlib import Path
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 
-from .agent import (
+from ..agent import (
     AgentLoopError,
     AgentRunResult,
     AgentStatus,
@@ -19,9 +19,9 @@ from .accessibility import (
 )
 from .assertions import evaluate_assertions
 from .executor import execute_action, execute_plan
-from .models import CheckResult, PageObservation, PageSnapshot
+from ..models import CheckResult, PageObservation, PageSnapshot
 from .observation import observe_page
-from .plans import (
+from ..plans import (
     ActionPlan,
     CompletionCriteria,
     CriteriaSource,

@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, StringConstraints
 
-from .budgets import (
+from .suite.budgets import (
     SuiteBudgetExceeded,
     SuiteBudgetSnapshot,
     SuiteExecutionPolicy,
@@ -21,7 +21,7 @@ from .planner import PlannerError
 from .run_jobs import RunJob, RunJobManager, RunQueueFull
 from .run_storage import RunPaths
 from .service import QaRunError, QaRunRequest, run_qa
-from .suites import (
+from .suite.suites import (
     MAX_SUITE_REQUEST_LENGTH,
     TEST_ID_PATTERN,
     SuiteRunResult,

@@ -1,16 +1,16 @@
 import pytest
 
-from autonomous_qa.budgets import (
+from autonomous_qa.suite.budgets import (
     SuiteBudgetTracker,
     SuiteExecutionPolicy,
 )
 from autonomous_qa.models import CheckResult
-from autonomous_qa.suite_runner import (
+from autonomous_qa.suite.suite_runner import (
     SuiteRunnerError,
     TestExecutionError as CaseExecutionError,
     run_test_suite,
 )
-from autonomous_qa.suites import (
+from autonomous_qa.suite.suites import (
     TestCase as SuiteCase,
     TestKind as SuiteTestKind,
     TestOutcome as CaseOutcome,

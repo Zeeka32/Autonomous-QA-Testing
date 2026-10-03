@@ -4,9 +4,9 @@ from enum import StrEnum
 
 from playwright.sync_api import Page
 
-from .executor import execute_action
+from .browser.executor import execute_action
 from .models import ActionResult, CheckResult, PageObservation
-from .observation import observe_page
+from .browser.observation import observe_page
 from .planner import DecisionStatus, PlannerDecision
 from .plans import PlanAssertion
 

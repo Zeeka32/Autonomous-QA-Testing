@@ -1,6 +1,6 @@
 from playwright.sync_api import Error as PlaywrightError
 
-from autonomous_qa.executor import (
+from autonomous_qa.browser.executor import (
     ACTION_TIMEOUT_MS,
     execute_action,
     execute_plan,

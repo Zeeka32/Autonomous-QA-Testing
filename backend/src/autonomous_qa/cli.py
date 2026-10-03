@@ -8,7 +8,7 @@ from .agent import (
     AgentStatus,
     AgentStepResult,
 )
-from .budgets import (
+from .suite.budgets import (
     DEFAULT_MAX_AI_REQUESTS,
     DEFAULT_MAX_BROWSER_GOALS,
     DEFAULT_MAX_BROWSER_RUNS,
@@ -17,7 +17,7 @@ from .budgets import (
     SuiteBudgetValidationError,
     SuiteExecutionPolicy,
 )
-from .checks import run_checks
+from .browser.checks import run_checks
 from .plan_loader import PlanLoadError, load_action_plan
 from .planner import PlannerError
 from .plans import (
@@ -41,7 +41,7 @@ from .reporting import (
     ReportWriteError,
     write_json_report,
 )
-from .runner import (
+from .browser.runner import (
     PageInspectionError,
     inspect_page,
     inspect_page_with_agent,
@@ -53,7 +53,7 @@ from .service import (
     create_ai_callbacks,
     run_qa,
 )
-from .suites import SuiteRunResult
+from .suite.suites import SuiteRunResult
 
 
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"

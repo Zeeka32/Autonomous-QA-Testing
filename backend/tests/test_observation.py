@@ -1,4 +1,4 @@
-from autonomous_qa.observation import (
+from autonomous_qa.browser.observation import (
     INTERACTIVE_SELECTOR,
     OBSERVATION_LIMIT,
     OPTION_LIMIT,

@@ -1,19 +1,19 @@
 from autonomous_qa.agent import AgentRunResult, AgentStatus
-from autonomous_qa.budgets import (
+from autonomous_qa.suite.budgets import (
     SuiteBudgetTracker,
     SuiteExecutionPolicy,
 )
 from autonomous_qa.models import CheckResult, PageSnapshot
 from autonomous_qa.planner import PlannerError, PlannerQuotaError
 from autonomous_qa.plans import TitleContainsAssertion
-from autonomous_qa.runner import (
+from autonomous_qa.browser.runner import (
     AccessibilityInspectionResult,
     AgentInspectionResult,
     PageInspectionError,
 )
-from autonomous_qa.suite_executors import create_suite_executors
-from autonomous_qa.suite_runner import run_test_suite
-from autonomous_qa.suites import (
+from autonomous_qa.suite.suite_executors import create_suite_executors
+from autonomous_qa.suite.suite_runner import run_test_suite
+from autonomous_qa.suite.suites import (
     TestCase as SuiteCase,
     TestKind as SuiteTestKind,
     TestStatus as CaseStatus,

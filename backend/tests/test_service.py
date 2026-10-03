@@ -6,12 +6,12 @@ from uuid import UUID
 import pytest
 
 from autonomous_qa import service
-from autonomous_qa.budgets import SuiteExecutionPolicy
+from autonomous_qa.suite.budgets import SuiteExecutionPolicy
 from autonomous_qa.models import PageObservation, PageSnapshot
 from autonomous_qa.planner import PlannerError
 from autonomous_qa.reporting import ReportWriteError
 from autonomous_qa.service import QaRunError, QaRunRequest, run_qa
-from autonomous_qa.suites import (
+from autonomous_qa.suite.suites import (
     TestCase as SuiteCase,
     TestKind as CaseKind,
     TestSuite as SuiteDefinition,

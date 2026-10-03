@@ -2,7 +2,7 @@ from playwright.sync_api import Error as PlaywrightError
 
 import pytest
 
-from autonomous_qa.assertions import evaluate_assertions
+from autonomous_qa.browser.assertions import evaluate_assertions
 from autonomous_qa.models import CheckResult
 from autonomous_qa.plans import (
     ElementAttributeContainsAssertion,

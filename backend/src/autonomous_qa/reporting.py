@@ -3,10 +3,10 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .agent import AgentRunResult, AgentStatus
-from .budgets import SuiteBudgetSnapshot
+from .suite.budgets import SuiteBudgetSnapshot
 from .models import CheckResult, PageSnapshot
 from .plans import CompletionCriteria
-from .suites import SuiteRunResult
+from .suite.suites import SuiteRunResult
 
 
 class ReportWriteError(RuntimeError):

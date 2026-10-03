@@ -1,8 +1,8 @@
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from .models import CheckResult
-from .plans import (
+from ..models import CheckResult
+from ..plans import (
     ElementAttributeContainsAssertion,
     ElementCheckedAssertion,
     ElementCountEqualsAssertion,

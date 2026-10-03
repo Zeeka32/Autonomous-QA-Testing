@@ -40,8 +40,8 @@ from autonomous_qa.planner import (
     PlannerError,
 )
 from autonomous_qa.reporting import ReportWriteError
-from autonomous_qa.runner import AgentInspectionResult, PageInspectionError
-from autonomous_qa.suites import (
+from autonomous_qa.browser.runner import AgentInspectionResult, PageInspectionError
+from autonomous_qa.suite.suites import (
     TestCase as SuiteCase,
     TestKind as SuiteTestKind,
     TestSuite as SuiteDefinition,

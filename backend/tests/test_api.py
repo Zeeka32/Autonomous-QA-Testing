@@ -9,7 +9,7 @@ from autonomous_qa import api, service
 from autonomous_qa.models import PageObservation, PageSnapshot
 from autonomous_qa.planner import PlannerError
 from autonomous_qa.reporting import ReportWriteError
-from autonomous_qa.suites import (
+from autonomous_qa.suite.suites import (
     TestCase as SuiteCase,
     TestKind as CaseKind,
     TestSuite as SuiteDefinition,

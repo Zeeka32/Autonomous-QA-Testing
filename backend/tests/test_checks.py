@@ -1,4 +1,4 @@
-from autonomous_qa.checks import (
+from autonomous_qa.browser.checks import (
     check_http_status,
     check_title,
     run_checks,

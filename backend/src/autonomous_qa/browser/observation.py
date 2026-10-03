@@ -1,6 +1,6 @@
 from playwright.sync_api import Page
 
-from .models import InteractiveElement, PageObservation
+from ..models import InteractiveElement, PageObservation
 
 
 OBSERVATION_LIMIT = 100

@@ -3,8 +3,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from urllib.parse import urlparse
 
-from .models import CheckResult
-from .plans import (
+from ..models import CheckResult
+from ..plans import (
     ALLOWED_ASSERTION_TYPES,
     MAX_PLAN_ASSERTIONS,
     PlanAssertion,

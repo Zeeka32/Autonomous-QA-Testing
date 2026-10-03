@@ -3,7 +3,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from autonomous_qa.plans import ElementVisibleAssertion
-from autonomous_qa.suites import (
+from autonomous_qa.suite.suites import (
     MAX_SUITE_TESTS,
     SuiteValidationError,
     TestCase as SuiteCase,

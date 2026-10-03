@@ -1,13 +1,13 @@
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from .agent import AgentStatus, AgentStepReporter, DecisionPlanner
+from ..agent import AgentStatus, AgentStepReporter, DecisionPlanner
 from .budgets import SuiteBudgetTracker
-from .checks import check_http_status, check_title, run_checks
-from .models import CheckResult, PageSnapshot
-from .planner import PlannerError, PlannerQuotaError
-from .plans import ActionPlan, NavigateAction, PlanAssertion
-from .runner import (
+from ..browser.checks import check_http_status, check_title, run_checks
+from ..models import CheckResult, PageSnapshot
+from ..planner import PlannerError, PlannerQuotaError
+from ..plans import ActionPlan, NavigateAction, PlanAssertion
+from ..browser.runner import (
     AccessibilityInspectionResult,
     AgentInspectionResult,
     CriteriaGenerator,

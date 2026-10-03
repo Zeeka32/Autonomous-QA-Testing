@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from autonomous_qa.budgets import (
+from autonomous_qa.suite.budgets import (
     SuiteBudgetTracker,
     SuiteExecutionPolicy,
 )
@@ -24,7 +24,7 @@ from autonomous_qa.reporting import (
     write_json_report,
     write_suite_json_report,
 )
-from autonomous_qa.suites import (
+from autonomous_qa.suite.suites import (
     SuiteRunResult,
     TestCase as SuiteCase,
     TestCaseResult as SuiteCaseResult,
