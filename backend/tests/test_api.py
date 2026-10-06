@@ -7,11 +7,18 @@ from fastapi.testclient import TestClient
 
 from autonomous_qa import api, service
 from autonomous_qa.models import PageObservation, PageSnapshot
-from autonomous_qa.planner import PlannerError
+from autonomous_qa.planner import (
+    PlannerError,
+    PlannerProviderError,
+    PlannerQuotaError,
+    UnsupportedSuiteRequestError,
+)
 from autonomous_qa.reporting import ReportWriteError
 from autonomous_qa.suite.suites import (
     TestCase as SuiteCase,
     TestKind as CaseKind,
+    TestOutcome as CaseOutcome,
+    TestStatus as CaseStatus,
     TestSuite as SuiteDefinition,
 )
 
@@ -68,13 +75,58 @@ def test_baseline_api_returns_id_then_serializes_report(client, inspect, tmp_pat
     assert json.loads(path.read_text())["run_id"] == data["run_id"]
 
 
+def test_status_shows_suite_and_completed_cases_during_run(
+    client, monkeypatch,
+):
+    second_started = Event()
+    release_second = Event()
+
+    def page_load(url, test):
+        return CaseOutcome(CaseStatus.PASSED, "Page loaded")
+
+    def page_title(url, test):
+        second_started.set()
+        assert release_second.wait(5)
+        return CaseOutcome(CaseStatus.FAILED, "Title missing")
+
+    monkeypatch.setattr(
+        service,
+        "create_suite_executors",
+        lambda *args, **kwargs: {
+            CaseKind.PAGE_LOAD: page_load,
+            CaseKind.TITLE_PRESENT: page_title,
+        },
+    )
+
+    accepted = client.post("/runs", json={"url": "https://example.com"}).json()
+    try:
+        assert second_started.wait(2)
+        progress = client.get(accepted["status_path"]).json()
+        assert progress["status"] == "running"
+        assert [test["test_id"] for test in progress["suite"]["tests"]] == [
+            "page-load", "page-title",
+        ]
+        assert [result["status"] for result in progress["results"]] == [
+            "passed",
+        ]
+    finally:
+        release_second.set()
+
+    final = wait_for_run(client, accepted)
+    assert final["status"] == "completed"
+    assert [result["status"] for result in final["results"]] == [
+        "passed", "failed",
+    ]
+
+
+@pytest.mark.parametrize("provider", ["openai", "cohere"])
 def test_generated_request_passes_provider_model_and_budget(
-    client, inspect, monkeypatch,
+    client, inspect, monkeypatch, provider,
 ):
     def generate(request, url, title, observation, model, **kwargs):
         assert request == "Test title"
         assert model == "test-model"
-        assert kwargs["provider"] == "openai"
+        assert kwargs["provider"] == provider
         return SuiteDefinition(url=url, request=request, tests=(
             SuiteCase("title", "Title", CaseKind.TITLE_PRESENT),
         ))
@@ -83,7 +135,7 @@ def test_generated_request_passes_provider_model_and_budget(
     response = client.post("/runs", json={
         "url": "https://example.com",
         "request": "Test title",
-        "provider": "openai",
+        "provider": provider,
         "model": "test-model",
         "budget_policy": {"max_ai_requests": 1},
     })
@@ -163,6 +215,86 @@ def test_planner_failure_is_structured_without_raw_provider_message(
     assert data["budget"]["ai_requests_used"] == 1
 
 
+def test_provider_quota_has_a_specific_safe_message(client, inspect, monkeypatch):
+    def fail(*args, **kwargs):
+        raise PlannerQuotaError("private provider 429 response")
+
+    monkeypatch.setattr(service, "generate_test_suite", fail)
+    accepted = client.post("/runs", json={
+        "url": "https://example.com", "request": "Test navigation",
+    }).json()
+    data = wait_for_run(client, accepted)
+
+    assert data["status"] == "failed"
+    assert data["code"] == "provider_quota"
+    assert "quota or rate limit" in data["message"]
+    assert "private provider" not in str(data)
+
+
+def test_unsupported_request_shows_planner_reason(client, inspect, monkeypatch):
+    def fail(*args, **kwargs):
+        raise UnsupportedSuiteRequestError(
+            "Visual regression is not supported by the current executors"
+        )
+
+    monkeypatch.setattr(service, "generate_test_suite", fail)
+    accepted = client.post("/runs", json={
+        "url": "https://example.com", "request": "Test visual regression",
+    }).json()
+    data = wait_for_run(client, accepted)
+
+    assert data["status"] == "failed"
+    assert data["code"] == "unsupported_request"
+    assert "Visual regression" in data["message"]
+
+
+def test_provider_rejection_identifies_model_without_raw_details(
+    client, inspect, monkeypatch,
+):
+    def fail(*args, **kwargs):
+        raise PlannerProviderError("private model response", status_code=404)
+
+    monkeypatch.setattr(service, "generate_test_suite", fail)
+    accepted = client.post("/runs", json={
+        "url": "https://example.com", "request": "Test navigation",
+    }).json()
+    data = wait_for_run(client, accepted)
+
+    assert data["code"] == "provider_model"
+    assert "model was not found" in data["message"]
+    assert "private model" not in str(data)
+
+
+def test_completed_suite_reports_provider_quota_stop(
+    client, inspect, monkeypatch,
+):
+    def generate(request, url, title, observation, model, **kwargs):
+        return SuiteDefinition(url=url, request=request, tests=(
+            SuiteCase(
+                "open-menu", "Open menu", CaseKind.BROWSER_GOAL,
+                goal="Open the menu",
+            ),
+        ))
+
+    def executors(*args, **kwargs):
+        def exhaust(url, test):
+            kwargs["budget"].stop("AI provider quota or rate limit was reached")
+        return {CaseKind.BROWSER_GOAL: exhaust}
+
+    monkeypatch.setattr(service, "generate_test_suite", generate)
+    monkeypatch.setattr(service, "create_suite_executors", executors)
+    accepted = client.post("/runs", json={
+        "url": "https://example.com", "request": "Open the menu",
+    }).json()
+    data = wait_for_run(client, accepted)
+
+    assert data["status"] == "completed"
+    assert data["passed"] is False
+    assert data["code"] == "provider_quota"
+    assert data["results"][0]["status"] == "skipped"
+    assert "quota or rate limit" in data["message"]
+
+
 def test_report_failure_preserves_completed_results(client, inspect, monkeypatch):
     def fail(*args, **kwargs):
         raise ReportWriteError("Disk failed")
@@ -185,7 +317,7 @@ def test_queued_running_and_full_queue_are_visible(tmp_path, monkeypatch):
     release = Event()
     monkeypatch.setattr(api, "load_dotenv", lambda **kwargs: None)
 
-    def hold_run(request, *, run_paths):
+    def hold_run(request, *, run_paths, **kwargs):
         started.set()
         assert release.wait(5)
         raise RuntimeError("test failure")

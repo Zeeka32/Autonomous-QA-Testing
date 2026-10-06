@@ -1,0 +1,22 @@
+.test-row { display: flex; gap: 14px; padding: 18px 0; border-bottom: 1px solid #edf0f2; }
+.status-mark { flex: 0 0 28px; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; font-size: 18px; font-weight: 800; line-height: 1; }
+.status-mark--passed { background: #e3f6ec; color: #15976f; }
+.status-mark--failed, .status-mark--error { background: #fcebe8; color: #d46252; }
+.status-mark--skipped, .status-mark--pending { background: #f0f3f5; color: #91a0aa; }
+.status-mark--running { position: relative; background: #e7f7f2; }
+.status-mark--running::after { content: ''; width: 12px; height: 12px; border: 2px solid #1aa585; border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+.test-body { min-width: 0; flex: 1; }
+.test-topline { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.test-topline h4 { margin: 0 0 4px; font-size: 13px; line-height: 1.5; }
+.test-status { text-transform: capitalize; color: #9aabb5; font-size: 11px; font-weight: 800; white-space: nowrap; }
+.test-status--passed { color: #15976f; }
+.test-status--failed, .test-status--error { color: #d46252; }
+.test-status--running { color: #159d7f; }
+.test-kind { margin: 0; color: #9aaab4; font-size: 11px; text-transform: capitalize; }
+.test-message { margin: 9px 0 0; color: #657a87; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.checks-detail { margin-top: 10px; font-size: 11px; }
+.checks-detail summary { color: #168f76; cursor: pointer; font-weight: 800; }
+.checks-detail ul { padding: 0 0 0 15px; margin: 8px 0 0; color: #6c7f8c; }
+.checks-detail li { margin: 0 0 7px; }
+.checks-detail li span { display: block; overflow-wrap: anywhere; }
+.checks-detail li span:first-child { font-weight: 800; }

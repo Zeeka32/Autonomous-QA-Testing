@@ -2,13 +2,14 @@
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Lock
 from typing import Literal
 
 from .run_storage import RunPaths
 from .service import QaRunRequest, QaRunResult
+from .suite.suites import TestCaseResult, TestSuite
 
 
 RunStatus = Literal["queued", "running", "completed", "failed"]
@@ -25,6 +26,8 @@ class RunJob:
     status: RunStatus
     result: QaRunResult | None = None
     error: Exception | None = None
+    suite: TestSuite | None = None
+    results: tuple[TestCaseResult, ...] = ()
 
 
 class RunJobManager:
@@ -73,18 +76,35 @@ class RunJobManager:
         with self._lock:
             return self._jobs.get(run_id)
 
+    def set_suite(self, run_id: str, suite: TestSuite) -> None:
+        with self._lock:
+            job = self._jobs[run_id]
+            self._jobs[run_id] = replace(job, suite=suite, results=())
+
+    def add_result(self, run_id: str, result: TestCaseResult) -> None:
+        with self._lock:
+            job = self._jobs[run_id]
+            self._jobs[run_id] = replace(
+                job, results=(*job.results, result),
+            )
+
     def _execute(self, request: QaRunRequest, paths: RunPaths) -> None:
         with self._lock:
             self._jobs[paths.run_id] = RunJob(paths.run_id, "running")
         try:
             result = self._worker(request, paths)
         except Exception as error:
-            job = RunJob(paths.run_id, "failed", error=error)
+            with self._lock:
+                self._jobs[paths.run_id] = replace(
+                    self._jobs[paths.run_id], status="failed", error=error,
+                )
         else:
-            job = RunJob(paths.run_id, "completed", result=result)
+            with self._lock:
+                self._jobs[paths.run_id] = replace(
+                    self._jobs[paths.run_id], status="completed", result=result,
+                )
         finally:
             with self._lock:
-                self._jobs[paths.run_id] = job
                 self._pending -= 1
 
     def shutdown(self) -> None:

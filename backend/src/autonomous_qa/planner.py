@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Literal, TypeVar
 
 from openai import OpenAI, OpenAIError
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .models import (
     ActionResult,
@@ -55,6 +55,7 @@ MAX_GENERATED_ACTIONS = 19
 MAX_GENERATED_CRITERIA = 5
 MAX_GENERATED_SUITE_TESTS = 5
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+COHERE_BASE_URL = "https://api.cohere.ai/compatibility/v1"
 
 PLANNER_INSTRUCTIONS = """
 You are a browser QA planner. Convert the user's goal into a short sequence of
@@ -261,6 +262,28 @@ class PlannerQuotaError(PlannerError):
     """Raised when an AI provider rejects a request for quota reasons."""
 
 
+class PlannerConfigurationError(PlannerError):
+    """Raised when a required provider credential is not configured."""
+
+
+class PlannerProviderError(PlannerError):
+    """Raised when the provider rejects a request for a non-quota reason."""
+
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class UnsupportedSuiteRequestError(PlannerError):
+    """Raised when the planner cannot cover a broad request with our tools."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(
+            f"AI suite planner cannot support this request: {reason}"
+        )
+
+
 def _validate_generated_selector(
     selector: str,
     observation: PageObservation,
@@ -276,6 +299,27 @@ def _validate_generated_selector(
     return observed_elements[selector]
 
 
+def _cohere_supported_schema(schema: dict[str, object]) -> object:
+    """Inline nested models and omit bounds unsupported by Cohere's schema mode."""
+    definitions = schema.get("$defs", {})
+
+    def inline(value: object) -> object:
+        if isinstance(value, dict):
+            reference = value.get("$ref")
+            if isinstance(reference, str) and isinstance(definitions, dict):
+                return inline(definitions[reference.rsplit("/", 1)[-1]])
+            return {
+                key: inline(item)
+                for key, item in value.items()
+                if key not in {"$defs", "maxItems", "minItems", "title"}
+            }
+        if isinstance(value, list):
+            return [inline(item) for item in value]
+        return value
+
+    return inline(schema)
+
+
 def _request_structured_output(
     messages: list[dict[str, str]],
     model: str,
@@ -285,6 +329,8 @@ def _request_structured_output(
 ) -> StructuredOutput:
     try:
         if provider == "openai":
+            if client is None and not os.getenv("OPENAI_API_KEY"):
+                raise PlannerConfigurationError("OPENAI_API_KEY is not set")
             planner_client = client or OpenAI()
             response = planner_client.responses.parse(
                 model=model,
@@ -295,7 +341,7 @@ def _request_structured_output(
         elif provider == "gemini":
             api_key = os.getenv("GEMINI_API_KEY")
             if client is None and not api_key:
-                raise PlannerError("GEMINI_API_KEY is not set")
+                raise PlannerConfigurationError("GEMINI_API_KEY is not set")
             planner_client = client or OpenAI(
                 api_key=api_key,
                 base_url=GEMINI_BASE_URL,
@@ -306,6 +352,48 @@ def _request_structured_output(
                 response_format=output_model,
             )
             parsed_output = completion.choices[0].message.parsed
+        elif provider == "cohere":
+            api_key = os.getenv("COHERE_API_KEY")
+            if client is None and not api_key:
+                raise PlannerConfigurationError("COHERE_API_KEY is not set")
+            planner_client = client or OpenAI(
+                api_key=api_key,
+                base_url=COHERE_BASE_URL,
+            )
+            # Cohere's compatibility endpoint accepts JSON Schema inside
+            # json_object, rather than the SDK's Pydantic response format.
+            schema = _cohere_supported_schema(output_model.model_json_schema())
+            cohere_messages = [
+                {
+                    **messages[0],
+                    "content": (
+                        f"{messages[0]['content']}\n"
+                        "Return only a JSON object matching this exact schema. "
+                        "Use the specified property names and types, including "
+                        "for every nested object:\n"
+                        f"{json.dumps(schema)}"
+                    ),
+                },
+                *messages[1:],
+            ]
+            completion = planner_client.chat.completions.create(
+                model=model,
+                messages=cohere_messages,
+                response_format={
+                    "type": "json_object",
+                    "schema": schema,
+                },
+            )
+            content = completion.choices[0].message.content
+            try:
+                parsed_output = (
+                    output_model.model_validate_json(content)
+                    if content else None
+                )
+            except ValidationError as error:
+                raise PlannerError(
+                    "Cohere planner returned invalid structured output"
+                ) from error
         else:
             raise PlannerError(f'Unsupported AI provider: "{provider}"')
     except OpenAIError as error:
@@ -323,7 +411,7 @@ def _request_structured_output(
             marker in error_text for marker in quota_markers
         ):
             raise PlannerQuotaError(message) from error
-        raise PlannerError(message) from error
+        raise PlannerProviderError(message, status_code) from error
 
     if parsed_output is None:
         raise PlannerError(
@@ -381,9 +469,7 @@ def generate_test_suite(
             raise PlannerError(
                 "Unsupported suite response must not include tests"
             )
-        raise PlannerError(
-            f"AI suite planner cannot support this request: {reason}"
-        )
+        raise UnsupportedSuiteRequestError(reason)
     if not generated_suite.tests:
         raise PlannerError(
             "Generated suite must include at least one test"

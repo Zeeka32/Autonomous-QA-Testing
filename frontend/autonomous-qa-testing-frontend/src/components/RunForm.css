@@ -1,0 +1,14 @@
+.panel-symbol { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; background: #eaf8f3; color: #1aa184; font-size: 22px; }
+.setup-panel form { padding: 30px; display: flex; flex-direction: column; }
+.setup-panel label { display: block; font-size: 13px; font-weight: 800; margin-bottom: 10px; }
+.setup-panel input, .setup-panel textarea, .setup-panel select { width: 100%; border: 1px solid #dce5e8; border-radius: 10px; background: #fbfcfc; color: #172a39; padding: 14px 15px; outline: 0; transition: border-color .15s, box-shadow .15s; }
+.setup-panel input:focus, .setup-panel textarea:focus, .setup-panel select:focus { border-color: #2ab697; box-shadow: 0 0 0 3px rgba(42, 182, 151, .14); }
+.setup-panel textarea { resize: vertical; min-height: 128px; line-height: 1.5; }
+.setup-panel input::placeholder, .setup-panel textarea::placeholder { color: #9aabb5; }
+.setup-panel select { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%236e8190' stroke-width='1.6' d='m3 6 5 5 5-5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 15px center; }
+.setup-panel :disabled { opacity: .65; cursor: not-allowed; }
+.field-help { font-size: 12px; line-height: 1.45; color: #8a9aa7; margin: 8px 0 26px; }
+.run-button { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 3px; padding: 15px 18px; border: 0; border-radius: 10px; background: #159c80; color: #fff; font-size: 14px; font-weight: 800; transition: background .15s, transform .15s; }
+.run-button:not(:disabled):hover { background: #0d896f; transform: translateY(-1px); }
+.run-button span:last-child { font-size: 22px; font-weight: 400; line-height: .8; }
+@media (max-width: 620px) { .setup-panel form { padding-left: 20px; padding-right: 20px; } }

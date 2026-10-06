@@ -28,7 +28,7 @@ from .browser.runner import (
     inspect_page_with_agent,
 )
 from .suite.suite_executors import create_suite_executors
-from .suite.suite_runner import SuiteRunnerError, run_test_suite
+from .suite.suite_runner import ResultReporter, SuiteRunnerError, run_test_suite
 from .suite.suites import (
     MAX_SUITE_REQUEST_LENGTH,
     SuiteRunResult,
@@ -41,8 +41,10 @@ from .suite.suites import (
 DEFAULT_MODELS = {
     "gemini": "gemini-3.8-flash",
     "openai": "gpt-5.6-luna",
+    "cohere": "command-a-03-2025",
 }
 MessageReporter = Callable[[str], None]
+SuiteReporter = Callable[[TestSuite], None]
 
 
 @dataclass(frozen=True)
@@ -207,6 +209,8 @@ def run_qa(
     *,
     on_message: MessageReporter | None = None,
     on_agent_step: AgentStepReporter | None = None,
+    on_suite: SuiteReporter | None = None,
+    on_test_result: ResultReporter | None = None,
     run_paths: RunPaths | None = None,
 ) -> QaRunResult:
     """Run a suite and save its report without reading CLI input or printing.
@@ -251,6 +255,14 @@ def run_qa(
                 paths.artifact_directory / "baseline-screenshot.png",
                 paths.artifact_directory / "baseline-trace.zip",
             )
+            if (
+                snapshot.action_results
+                and snapshot.action_results[0].status != "passed"
+            ):
+                raise PageInspectionError(
+                    f'Could not navigate to "{request.url}": '
+                    f"{snapshot.action_results[0].message}"
+                )
             if snapshot.observation is None:
                 raise PageInspectionError(
                     "Initial page observation is unavailable"
@@ -282,6 +294,9 @@ def run_qa(
                 on_message=on_message,
             )
 
+        if on_suite is not None:
+            on_suite(suite)
+
         executors = create_suite_executors(
             paths.artifact_directory,
             planner=planner,
@@ -293,7 +308,9 @@ def run_qa(
             initial_snapshots=initial_snapshots,
             budget=budget,
         )
-        suite_run = run_test_suite(suite, executors, budget=budget)
+        suite_run = run_test_suite(
+            suite, executors, budget=budget, on_result=on_test_result,
+        )
         budget_snapshot = budget.snapshot()
         write_suite_json_report(
             paths.report_path,

@@ -2,6 +2,7 @@ from playwright.sync_api import Error as PlaywrightError
 
 from autonomous_qa.browser.executor import (
     ACTION_TIMEOUT_MS,
+    NAVIGATION_TIMEOUT_MS,
     execute_action,
     execute_plan,
 )
@@ -80,7 +81,7 @@ def test_execute_action_runs_one_action_and_records_its_result() -> None:
             "navigate",
             "https://example.com",
             "domcontentloaded",
-            ACTION_TIMEOUT_MS,
+            NAVIGATION_TIMEOUT_MS,
         )
     ]
 
@@ -123,7 +124,12 @@ def test_executor_runs_actions_in_order() -> None:
 
     assert execution.navigation_response is page.response
     assert page.events == [
-        ("navigate", "https://example.com", "domcontentloaded", ACTION_TIMEOUT_MS),
+        (
+            "navigate",
+            "https://example.com",
+            "domcontentloaded",
+            NAVIGATION_TIMEOUT_MS,
+        ),
         ("fill", "#search", "QA testing", ACTION_TIMEOUT_MS),
         ("click", "#submit", ACTION_TIMEOUT_MS),
         ("wait_for", "#results", "visible", ACTION_TIMEOUT_MS),

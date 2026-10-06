@@ -52,8 +52,9 @@ reports, screenshots, and traces. CLI workflows are still available.
 
 ## Not included yet
 
-The project does not yet include broad site crawling, authentication, a
-database, or a frontend. AI-driven runs are intentionally bounded to the
+The project does not yet include broad site crawling, authentication, or a
+database. A small local frontend is available under `frontend/`.
+AI-driven runs are intentionally bounded to the
 validated browser actions described below.
 
 ## Running the HTTP API
@@ -95,6 +96,11 @@ To generate a suite, add request text and optional budgets:
 `artifact_directory`. `passed` can be false even when status is `completed`:
 the run finished, but some tests failed or were skipped.
 
+While a run is in progress, the same status endpoint also includes `suite`
+once tests have been generated and `results` as an ordered list of completed
+cases. Clients can poll these fields to show per-test progress. Before planning
+finishes, `suite` is null and `results` is empty.
+
 Output is stored under `qa-runs/<run-id>/` relative to the server working
 directory. The response paths are server filesystem paths. Download files
 through the API instead:
@@ -124,9 +130,14 @@ HTTP status codes:
 - `429` from `POST /runs`: the in-process run queue is full.
 
 Failed run statuses include a safe error code and message, budget usage when
-available, and any completed suite results. Provider exception details stay
-in server logs. A busy provider can still cause a run to fail, but the
-original `POST` no longer waits for that request to finish.
+available, and any completed suite results. The API distinguishes provider
+quota/rate limits, unsupported test requests, missing or rejected credentials,
+unavailable models, temporary provider outages, and exhausted run budgets.
+For unsupported requests, the planner's short explanation is returned. Raw
+provider exception details stay in server logs. A completed suite stopped by
+a provider or run budget also includes a code and message alongside its skipped
+test results. A busy provider can still cause a run to fail, but the original
+`POST` no longer waits for that request to finish.
 
 The in-memory registry allows two workers and eight active jobs (running plus
 queued) by default. The ID and status are available only in the server process
@@ -319,9 +330,9 @@ allowed action types are navigation, clicking an element, filling an input,
 waiting for an element to become visible, selecting a dropdown option, and
 checking or unchecking native form controls, and pressing a limited set of
 keys on an observed element.
-Plans are limited to 20 actions, and each browser action has a 10-second
-timeout. The executor accepts only these action objects; it does not execute
-arbitrary code or unvalidated commands.
+Plans are limited to 20 actions. Navigation has a 40-second timeout; other
+browser actions have a 10-second timeout. The executor accepts only these
+action objects; it does not execute arbitrary code or unvalidated commands.
 
 Run a JSON action plan instead of passing a URL directly:
 
@@ -501,5 +512,7 @@ python -m autonomous_qa https://example.com \
   --provider openai
 ```
 
-OpenAI defaults to `gpt-5.6-luna`. Both providers can be given an explicit
-model with `--model`.
+OpenAI defaults to `gpt-5.6-luna`. Cohere is also available by placing
+`COHERE_API_KEY` in `.env` and selecting `--provider cohere` (or `"provider":
+"cohere"` in an API run). Its default model is `command-a-03-2025`.
+Any provider can be given an explicit model with `--model`.

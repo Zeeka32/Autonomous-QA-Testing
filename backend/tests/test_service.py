@@ -7,7 +7,7 @@ import pytest
 
 from autonomous_qa import service
 from autonomous_qa.suite.budgets import SuiteExecutionPolicy
-from autonomous_qa.models import PageObservation, PageSnapshot
+from autonomous_qa.models import ActionResult, PageObservation, PageSnapshot
 from autonomous_qa.planner import PlannerError
 from autonomous_qa.reporting import ReportWriteError
 from autonomous_qa.service import QaRunError, QaRunRequest, run_qa
@@ -107,6 +107,41 @@ def test_generated_suite_reuses_observation_and_emits_optional_progress(
     assert capsys.readouterr().out == ""
 
 
+def test_failed_initial_navigation_never_reaches_suite_planner(
+    request_data, monkeypatch,
+) -> None:
+    def inspect(*args):
+        return PageSnapshot(
+            url=request_data.url,
+            status=None,
+            title="The Internet",
+            observation=PageObservation(elements=(), truncated=False),
+            action_results=(ActionResult(
+                step_number=1,
+                kind="navigate",
+                status="failed",
+                duration_ms=40_000,
+                url_before="about:blank",
+                url_after=request_data.url,
+                message="Timeout 40000ms exceeded",
+            ),),
+        )
+
+    def unexpected_planning(*args, **kwargs):
+        pytest.fail("Suite planner must not receive a failed navigation")
+
+    monkeypatch.setattr(service, "inspect_page", inspect)
+    monkeypatch.setattr(service, "generate_test_suite", unexpected_planning)
+
+    with pytest.raises(
+        QaRunError, match="Could not navigate.*Timeout 40000ms exceeded",
+    ) as caught:
+        run_qa(replace(request_data, request="Test the checkboxes"))
+
+    assert caught.value.budget.browser_runs_used == 1
+    assert caught.value.budget.ai_requests_used == 0
+
+
 def test_exhausted_execution_budget_returns_skipped_results(
     request_data, inspections,
 ) -> None:
@@ -181,6 +216,12 @@ def test_unexpected_programming_errors_propagate(
 def test_request_validates_inputs_before_execution(request_data, changes):
     with pytest.raises(ValueError):
         replace(request_data, **changes)
+
+
+def test_cohere_request_uses_default_model(request_data):
+    request = replace(request_data, provider="cohere")
+
+    assert request.resolved_model == "command-a-03-2025"
 
 
 def test_concurrent_runs_write_to_separate_directories(

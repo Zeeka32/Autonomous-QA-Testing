@@ -21,6 +21,7 @@ from autonomous_qa.planner import (
     GeneratedSuiteTest,
     PlannerError,
     PlannerQuotaError,
+    UnsupportedSuiteRequestError,
     generate_action_plan,
     generate_completion_criteria,
     generate_next_decision,
@@ -142,6 +143,63 @@ class FakeGemini:
         self.completions = FakeGeminiCompletions(output_parsed)
         self.chat = SimpleNamespace(completions=self.completions)
         self.beta = SimpleNamespace(chat=self.chat)
+
+
+class FakeCohereCompletions:
+    def __init__(self, content: str | None) -> None:
+        self.content = content
+        self.request = None
+
+    def create(self, **kwargs):
+        self.request = kwargs
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(content=self.content)
+        )])
+
+
+class FakeCohere:
+    def __init__(self, content: str | None) -> None:
+        self.completions = FakeCohereCompletions(content)
+        self.chat = SimpleNamespace(completions=self.completions)
+
+
+def test_cohere_planner_uses_json_schema_and_validates_output() -> None:
+    client = FakeCohere(GeneratedPlan(actions=[
+        GeneratedAction(kind="click", selector="#submit", value="")
+    ]).model_dump_json())
+
+    plan = generate_action_plan(
+        goal="Click search",
+        starting_url="https://example.com",
+        observation=make_observation(),
+        model="command-a-03-2025",
+        provider="cohere",
+        client=client,
+    )
+
+    assert isinstance(plan.actions[1], ClickAction)
+    assert client.completions.request["model"] == "command-a-03-2025"
+    response_format = client.completions.request["response_format"]
+    assert response_format["type"] == "json_object"
+    assert response_format["schema"]["properties"]["actions"]["items"][
+        "required"
+    ] == ["kind", "selector", "value"]
+    assert "maxItems" not in response_format["schema"]["properties"]["actions"]
+    assert "\"selector\"" in client.completions.request["messages"][0]["content"]
+
+
+def test_cohere_planner_rejects_invalid_output() -> None:
+    client = FakeCohere('{"actions": [{"kind": "invented"}]}')
+
+    with pytest.raises(PlannerError, match="invalid structured output"):
+        generate_action_plan(
+            goal="Click search",
+            starting_url="https://example.com",
+            observation=make_observation(),
+            model="command-a-03-2025",
+            provider="cohere",
+            client=client,
+        )
 
 
 def test_planner_converts_structured_output_to_internal_plan() -> None:
@@ -945,6 +1003,21 @@ def test_gemini_planner_requires_an_api_key_without_injected_client(
         )
 
 
+def test_cohere_planner_requires_an_api_key_without_injected_client(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("COHERE_API_KEY", raising=False)
+
+    with pytest.raises(PlannerError, match="COHERE_API_KEY is not set"):
+        generate_action_plan(
+            goal="Click search",
+            starting_url="https://example.com",
+            observation=make_observation(),
+            model="command-a-03-2025",
+            provider="cohere",
+        )
+
+
 def test_planner_rejects_unobserved_selectors() -> None:
     client = FakeOpenAI(
         GeneratedPlan(
@@ -1126,6 +1199,34 @@ def test_gemini_suite_planner_uses_structured_output() -> None:
     assert client.completions.request["model"] == "gemini-test-model"
 
 
+def test_cohere_suite_planner_uses_structured_output() -> None:
+    client = FakeCohere(GeneratedSuite(
+        status="suite",
+        tests=[GeneratedSuiteTest(
+            test_id="page-load",
+            name="Page loads",
+            kind="page_load",
+            goal="",
+        )],
+        reason="Supported by current executors",
+    ).model_dump_json())
+
+    suite = generate_test_suite(
+        request="Run a smoke test",
+        starting_url="https://example.com",
+        page_title="Example Domain",
+        observation=make_observation(),
+        model="command-a-03-2025",
+        provider="cohere",
+        client=client,
+    )
+
+    assert suite.tests[0].kind is SuiteTestKind.PAGE_LOAD
+    assert client.completions.request["response_format"]["type"] == "json_object"
+    assert "\"test_id\"" in client.completions.request["messages"][0]["content"]
+    assert "\"name\"" in client.completions.request["messages"][0]["content"]
+
+
 def test_suite_planner_rejects_a_goal_on_deterministic_test() -> None:
     client = FakeOpenAI(
         GeneratedSuite(
@@ -1245,7 +1346,9 @@ def test_suite_planner_reports_unsupported_request() -> None:
         )
     )
 
-    with pytest.raises(PlannerError, match="cannot support this request"):
+    with pytest.raises(
+        UnsupportedSuiteRequestError, match="cannot support this request"
+    ) as caught:
         generate_test_suite(
             "Run a full accessibility audit",
             "https://example.com",
@@ -1254,6 +1357,7 @@ def test_suite_planner_reports_unsupported_request() -> None:
             "test-model",
             client,
         )
+    assert caught.value.reason == "A full accessibility audit is not supported"
 
 
 def test_suite_planner_supports_basic_accessibility_test() -> None:

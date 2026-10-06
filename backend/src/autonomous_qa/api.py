@@ -17,13 +17,21 @@ from .suite.budgets import (
     SuiteBudgetSnapshot,
     SuiteExecutionPolicy,
 )
-from .planner import PlannerError
+from .planner import (
+    PlannerConfigurationError,
+    PlannerError,
+    PlannerProviderError,
+    PlannerQuotaError,
+    UnsupportedSuiteRequestError,
+)
 from .run_jobs import RunJob, RunJobManager, RunQueueFull
 from .run_storage import RunPaths
 from .service import QaRunError, QaRunRequest, run_qa
 from .suite.suites import (
     MAX_SUITE_REQUEST_LENGTH,
     TEST_ID_PATTERN,
+    TestCaseResult,
+    TestSuite,
     SuiteRunResult,
 )
 
@@ -37,6 +45,7 @@ ARTIFACT_MEDIA_TYPES = {
     ".png": "image/png",
     ".zip": "application/zip",
 }
+PROVIDER_QUOTA_REASON = "AI provider quota or rate limit was reached"
 
 
 class BudgetInput(BaseModel):
@@ -59,7 +68,7 @@ class RunInput(BaseModel):
     request: NonBlankText | None = Field(
         default=None, max_length=MAX_SUITE_REQUEST_LENGTH
     )
-    provider: Literal["gemini", "openai"] = "gemini"
+    provider: Literal["gemini", "openai", "cohere"] = "gemini"
     model: NonBlankText | None = None
     budget_policy: BudgetInput = Field(default_factory=BudgetInput)
 
@@ -73,6 +82,8 @@ class RunAcceptedResponse(BaseModel):
 class RunStatusResponse(BaseModel):
     run_id: str
     status: Literal["queued", "running", "completed", "failed"]
+    suite: TestSuite | None = None
+    results: tuple[TestCaseResult, ...] = ()
     passed: bool | None = None
     suite_run: SuiteRunResult | None = None
     budget: SuiteBudgetSnapshot | None = None
@@ -129,31 +140,94 @@ def _allowed_artifact_names(directory: Path) -> set[str]:
     return names
 
 
+def _budget_failure(reason: str) -> tuple[str, str]:
+    if reason == PROVIDER_QUOTA_REASON:
+        return (
+            "provider_quota",
+            "AI provider quota or rate limit reached. Check your provider "
+            "limits or credits, then try again.",
+        )
+    return "budget_exhausted", reason
+
+
+def _planner_failure(error: PlannerError) -> tuple[str, str]:
+    if isinstance(error, PlannerQuotaError):
+        return _budget_failure(PROVIDER_QUOTA_REASON)
+    if isinstance(error, UnsupportedSuiteRequestError):
+        reason = " ".join(error.reason.split())[:300]
+        return (
+            "unsupported_request",
+            f"This request is not supported by the current QA tools: {reason}",
+        )
+    if isinstance(error, PlannerConfigurationError):
+        return (
+            "provider_configuration",
+            "AI provider credentials are not configured on the backend.",
+        )
+    if isinstance(error, PlannerProviderError):
+        if error.status_code == 400:
+            return (
+                "provider_request_invalid",
+                "The AI provider rejected the planner request. Check the "
+                "configured model and request format.",
+            )
+        if error.status_code in {401, 403}:
+            return (
+                "provider_auth",
+                "The AI provider rejected the configured credentials.",
+            )
+        if error.status_code == 404:
+            return (
+                "provider_model",
+                "The configured AI model was not found or is unavailable.",
+            )
+        if error.status_code in {500, 502, 503, 504}:
+            return (
+                "provider_unavailable",
+                "The AI provider is temporarily unavailable. Try again later.",
+            )
+        return "provider_error", "The AI provider request failed."
+    return (
+        "planner_error",
+        "AI could not produce a valid test plan. Try a narrower request.",
+    )
+
+
 def _status_response(job: RunJob) -> RunStatusResponse:
     if job.result is not None:
+        budget_reason = job.result.budget.exhausted_reason
+        code, message = (
+            _budget_failure(budget_reason)
+            if budget_reason is not None
+            else (None, None)
+        )
         return RunStatusResponse(
             run_id=job.run_id,
             status="completed",
+            suite=job.result.suite_run.suite,
+            results=job.result.suite_run.results,
             passed=job.result.passed,
             suite_run=job.result.suite_run,
             budget=job.result.budget,
             report_path=str(job.result.report_path),
             artifact_directory=str(job.result.artifact_directory),
+            code=code,
+            message=message,
         )
     if isinstance(job.error, QaRunError):
         error = job.error
         if isinstance(error.__cause__, SuiteBudgetExceeded):
-            code = "budget_exhausted"
-            message = "The run exhausted its budget before execution."
+            code, message = _budget_failure(str(error.__cause__))
         elif isinstance(error.__cause__, PlannerError):
-            code = "planner_error"
-            message = "AI planning failed. Check the provider logs."
+            code, message = _planner_failure(error.__cause__)
         else:
             code = "execution_error"
             message = "The run could not finish. Check the server logs."
         return RunStatusResponse(
             run_id=job.run_id,
             status="failed",
+            suite=job.suite,
+            results=job.results,
             suite_run=error.suite_run,
             budget=error.budget,
             code=code,
@@ -163,10 +237,17 @@ def _status_response(job: RunJob) -> RunStatusResponse:
         return RunStatusResponse(
             run_id=job.run_id,
             status="failed",
+            suite=job.suite,
+            results=job.results,
             code="internal_error",
             message="The run failed unexpectedly. Check the server logs.",
         )
-    return RunStatusResponse(run_id=job.run_id, status=job.status)
+    return RunStatusResponse(
+        run_id=job.run_id,
+        status=job.status,
+        suite=job.suite,
+        results=job.results,
+    )
 
 
 def create_app(
@@ -177,7 +258,16 @@ def create_app(
 ) -> FastAPI:
     def execute(request: QaRunRequest, paths: RunPaths):
         try:
-            return run_qa(request, run_paths=paths)
+            return run_qa(
+                request,
+                run_paths=paths,
+                on_suite=lambda suite: app.state.jobs.set_suite(
+                    paths.run_id, suite,
+                ),
+                on_test_result=lambda result: app.state.jobs.add_result(
+                    paths.run_id, result,
+                ),
+            )
         except Exception:
             logger.exception("QA run %s failed", paths.run_id)
             raise

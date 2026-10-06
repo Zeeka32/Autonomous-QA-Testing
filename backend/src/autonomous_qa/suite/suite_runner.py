@@ -15,6 +15,7 @@ from .suites import (
 
 
 TestExecutor = Callable[[str, TestCase], TestOutcome]
+ResultReporter = Callable[[TestCaseResult], None]
 
 
 class SuiteRunnerError(RuntimeError):
@@ -43,6 +44,7 @@ def run_test_suite(
     suite: TestSuite,
     executors: Mapping[TestKind, TestExecutor],
     budget: SuiteBudgetTracker | None = None,
+    on_result: ResultReporter | None = None,
 ) -> SuiteRunResult:
     required_kinds = {test.kind for test in suite.tests}
     missing_kinds = required_kinds - set(executors)
@@ -61,25 +63,33 @@ def run_test_suite(
             )
         except SuiteBudgetExceeded as error:
             message = str(error)
-            return SuiteRunResult(
+            suite_run = SuiteRunResult(
                 suite=suite,
                 results=tuple(
                     _skipped_result(test, message)
                     for test in suite.tests
                 ),
             )
+            if on_result is not None:
+                for result in suite_run.results:
+                    on_result(result)
+            return suite_run
 
     results: list[TestCaseResult] = []
+
+    def record(result: TestCaseResult) -> None:
+        results.append(result)
+        if on_result is not None:
+            on_result(result)
+
     for index, test in enumerate(suite.tests):
         if budget is not None:
             try:
                 budget.check_duration()
             except SuiteBudgetExceeded as error:
                 message = str(error)
-                results.extend(
-                    _skipped_result(remaining_test, message)
-                    for remaining_test in suite.tests[index:]
-                )
+                for remaining_test in suite.tests[index:]:
+                    record(_skipped_result(remaining_test, message))
                 break
 
         started_at = perf_counter()
@@ -88,13 +98,9 @@ def run_test_suite(
         except SuiteBudgetExceeded as error:
             duration_ms = (perf_counter() - started_at) * 1_000
             message = str(error)
-            results.append(
-                _skipped_result(test, message, duration_ms)
-            )
-            results.extend(
-                _skipped_result(remaining_test, message)
-                for remaining_test in suite.tests[index + 1:]
-            )
+            record(_skipped_result(test, message, duration_ms))
+            for remaining_test in suite.tests[index + 1:]:
+                record(_skipped_result(remaining_test, message))
             break
         except TestExecutionError as error:
             error_message = str(error).strip() or "Test execution failed"
@@ -109,7 +115,7 @@ def run_test_suite(
                 f'Executor for "{test.test_id}" returned an invalid outcome'
             )
 
-        results.append(
+        record(
             TestCaseResult(
                 test_id=test.test_id,
                 kind=test.kind,

@@ -20,6 +20,7 @@ from ..plans import (
 
 
 ACTION_TIMEOUT_MS = 10_000
+NAVIGATION_TIMEOUT_MS = 40_000
 
 
 @dataclass(frozen=True)
@@ -66,7 +67,7 @@ def execute_action(
             navigation_response = page.goto(
                 action.url,
                 wait_until="domcontentloaded",
-                timeout=ACTION_TIMEOUT_MS,
+                timeout=NAVIGATION_TIMEOUT_MS,
             )
         elif isinstance(action, ClickAction):
             page.locator(action.selector).click(timeout=ACTION_TIMEOUT_MS)
