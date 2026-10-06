@@ -1,0 +1,22 @@
+services:
+  backend:
+    build: ./backend
+    init: true
+    shm_size: 1gb
+    env_file:
+      - path: ./backend/.env
+        required: false
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - qa_runs:/app/qa-runs
+
+  frontend:
+    build: ./frontend/autonomous-qa-testing-frontend
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:5173:80"
+
+volumes:
+  qa_runs:

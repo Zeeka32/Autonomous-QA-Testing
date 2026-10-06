@@ -47,6 +47,23 @@ before a suite finishes, it may leave a trace without a JSON report.
 
 ## Run locally
 
+With Docker Compose, run this from the repository root:
+
+```bash
+docker compose up --build
+```
+
+Open `http://localhost:5173` for the UI or `http://localhost:8000/docs`
+for the API docs. Leave the request blank for checks that need no AI key.
+For AI-generated tests, put the selected provider's key in `backend/.env`
+(see `backend/.env.example`) before starting Compose. That file is passed to
+the backend at runtime and is excluded from both image build contexts.
+Run artifacts are kept in the `qa_runs` Docker volume across container
+restarts; in-memory run status is not. Stop the services with
+`docker compose down` (without `-v` if you want to keep artifacts).
+
+Or run both services directly on your machine:
+
 Start the API from the `backend/` directory:
 
 ```bash
