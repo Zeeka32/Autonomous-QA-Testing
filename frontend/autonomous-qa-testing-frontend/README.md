@@ -3,6 +3,8 @@
 A small React + Vite interface for the local QA API. Enter a website URL and
 an optional test request, start a run, and watch the generated cases receive
 results as they finish. A blank request runs the deterministic baseline checks.
+The interface starts in dark mode; use the header switch to choose light mode.
+The choice is saved in this browser.
 
 ## Run locally
 

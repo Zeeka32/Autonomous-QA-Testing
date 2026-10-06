@@ -3,14 +3,16 @@ import { RunForm } from "./components/RunForm";
 import { RunOverview } from "./components/RunOverview";
 import { SiteHeader } from "./components/SiteHeader";
 import { useQaRun } from "./hooks/useQaRun";
+import { useTheme } from "./hooks/useTheme";
 import "./App.css";
 
 function App() {
   const qa = useQaRun();
+  const { theme, toggleTheme } = useTheme();
 
   return (
     <div className="app-shell">
-      <SiteHeader />
+      <SiteHeader theme={theme} onToggleTheme={toggleTheme} />
       <main className="main-content">
         <Intro />
         <div className="workspace-grid">

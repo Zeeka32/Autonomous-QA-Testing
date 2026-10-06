@@ -1,8 +1,8 @@
 .intro { max-width: 690px; margin-bottom: 45px; }
-.eyebrow { margin: 0 0 17px; font-size: 11px; letter-spacing: 2px; font-weight: 800; color: #22a989; }
+.eyebrow { margin: 0 0 17px; font-size: 11px; letter-spacing: 2px; font-weight: 800; color: var(--accent); }
 .intro h1 { font-size: clamp(43px, 5vw, 68px); letter-spacing: -3.6px; line-height: 1.09; margin-bottom: 23px; font-weight: 800; }
-.intro h1 span { color: #20a889; }
-.intro-copy { color: #687989; max-width: 600px; font-size: 17px; line-height: 1.7; margin-bottom: 0; }
+.intro h1 span { color: var(--accent); }
+.intro-copy { color: var(--muted); max-width: 600px; font-size: 17px; line-height: 1.7; margin-bottom: 0; }
 @media (max-width: 900px) { .intro { margin-bottom: 32px; } }
 @media (max-width: 620px) {
   .intro h1 { font-size: 43px; letter-spacing: -2px; }

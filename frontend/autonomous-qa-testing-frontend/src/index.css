@@ -2,11 +2,78 @@
 
 :root {
   font-family: 'DM Sans', sans-serif;
-  color: #162334;
-  background: #f5f7f8;
+  color-scheme: dark;
+  color: var(--text);
+  background: var(--page-bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  --page-bg: #0b0f14;
+  --surface: #161c24;
+  --surface-alt: #1d2630;
+  --surface-raised: #24303b;
+  --text: #edf4f4;
+  --text-strong: #f7faf9;
+  --muted: #aab9c3;
+  --muted-dim: #91a3ae;
+  --muted-subtle: #82949f;
+  --border: #34414d;
+  --border-soft: #293540;
+  --accent: #56d7b2;
+  --accent-soft: #193b32;
+  --accent-tint: #1b302b;
+  --input-bg: #111820;
+  --input-border: #3a4b57;
+  --focus: #64e5bc;
+  --placeholder: #869ba7;
+  --button-bg: #0f765a;
+  --button-hover: #128a68;
+  --button-text: #fff;
+  --success: #63d8aa;
+  --success-bg: #1b4032;
+  --danger: #ffab99;
+  --danger-bg: #412722;
+  --danger-border: #70433d;
+  --empty-border: #456357;
+  --progress-bg: #293b38;
+  --spinner-bg: #365b4c;
+  --brand-icon-bg: #294438;
+  --shadow: 0 14px 40px rgba(0, 0, 0, .22);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --page-bg: #f5f7f8;
+  --surface: #fff;
+  --surface-alt: #f4f6f7;
+  --surface-raised: #fff;
+  --text: #162334;
+  --text-strong: #172b39;
+  --muted: #687989;
+  --muted-dim: #8293a0;
+  --muted-subtle: #9aabb5;
+  --border: #e3e9ec;
+  --border-soft: #edf0f2;
+  --accent: #117e67;
+  --accent-soft: #e9f8f2;
+  --accent-tint: #f5fbf8;
+  --input-bg: #fbfcfc;
+  --input-border: #dce5e8;
+  --focus: #2aaf9b;
+  --placeholder: #9aabb5;
+  --button-bg: #117e67;
+  --button-hover: #0d6c58;
+  --button-text: #fff;
+  --success: #0e7859;
+  --success-bg: #e3f6ec;
+  --danger: #b84a3c;
+  --danger-bg: #fff0eb;
+  --danger-border: #f3d7d0;
+  --empty-border: #cddfd9;
+  --progress-bg: #edf3f2;
+  --spinner-bg: #d4ebe3;
+  --brand-icon-bg: #102a3a;
+  --shadow: 0 14px 40px rgba(25, 49, 64, .04);
 }
 
 * { box-sizing: border-box; }
@@ -14,4 +81,4 @@ body { margin: 0; min-width: 320px; }
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
 a { color: inherit; }
-:focus-visible { outline: 3px solid #2aaf9b; outline-offset: 3px; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
