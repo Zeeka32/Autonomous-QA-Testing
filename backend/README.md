@@ -1,9 +1,8 @@
-# Autonomous QA Testing
+# Backend
 
-## Project goal
-
-Build a tool that accepts a website URL, opens the site in a real browser, runs
-repeatable quality checks, and explains the results clearly.
+For what the whole application can and cannot test, see the
+[project README](../README.md). This document covers the Python QA engine,
+CLI, and HTTP API.
 
 ## Version 0.1
 
@@ -43,19 +42,6 @@ engine. Imports should use the new module paths, such as
 Version 0.3.0 adds a local HTTP API. It accepts runs immediately, executes them
 in a small in-process worker pool, and lets clients poll results and download
 reports, screenshots, and traces. CLI workflows are still available.
-
-## Initial checks
-
-- Navigation completes successfully.
-- The main page response has an HTTP status below 400.
-- The page title is not empty.
-
-## Not included yet
-
-The project does not yet include broad site crawling, authentication, or a
-database. A small local frontend is available under `frontend/`.
-AI-driven runs are intentionally bounded to the
-validated browser actions described below.
 
 ## Running the HTTP API
 
@@ -250,10 +236,9 @@ links, and titles for visible iframes. It records every check in the suite
 report and writes a dedicated screenshot and trace. This is a bounded automated
 audit, not a full WCAG conformance assessment.
 
-The suite planner still cannot generate performance, security,
-visual-regression, API, upload, download, authentication, or full/manual WCAG
-audit tests because deterministic executors for those capabilities do not
-exist. Goal and expectation flags cannot be combined with either suite mode.
+The supported and unsupported test types are summarized in the
+[project README](../README.md). Goal and expectation flags cannot be combined
+with either suite mode.
 
 The JSON report contains an `actions` array with one record per attempted
 browser action. Each record includes its step number, action kind, status
